@@ -1,0 +1,4 @@
+source: https://github.com/IIIF/presentation-validator
+sha: 5fccfbc01ac6627ecdb81f845a595b5ea295f86d
+path: fixtures/3/broken_choice.json
+sha256: 5efa92e6d278c7055042dbb6d0cda4c31f7ee74fc58e6f3bf5531dbdfece3324

@@ -1,0 +1,4 @@
+source: https://github.com/IIIF/image-validator
+sha: 1740893f1fb22960142071a9f3d1c99122a190c7
+path: tests/json/info-3.0-service-badlabel.json
+sha256: 0053f8120a8806f85db9c9b4f7f4a150062e42b79cb119bbe37f9c712b4bcf52
