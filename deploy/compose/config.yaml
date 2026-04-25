@@ -1,0 +1,40 @@
+server:
+  listen: ":8080"
+  public_base_url: "http://localhost:8080"
+
+logging:
+  level: info
+  format: json
+
+vips:
+  block_untrusted: true
+
+iiif:
+  image:
+    enabled: true
+    prefix: /iiif/3
+    max_output_pixels: 100000000
+  presentation:
+    enabled: false
+    prefix: /presentation/v3
+    root: /var/lib/triplet/presentation
+  search:
+    enabled: false
+    prefix: /search/v2
+
+sources:
+  default: file
+  file:
+    root: /var/lib/triplet/images
+
+cache:
+  root: /var/lib/triplet/cache
+  max_bytes: 1073741824
+  source_root: /var/lib/triplet/source-cache
+  source_max_bytes: 1073741824
+
+extensions:
+  transform:
+    enabled: false
+  uploads:
+    enabled: false
