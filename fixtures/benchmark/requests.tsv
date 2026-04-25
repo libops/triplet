@@ -1,0 +1,10 @@
+# name	path
+info	info.json
+full_jpg	full/max/0/default.jpg
+thumb_jpg	full/256,/0/default.jpg
+large_jpg	full/1024,/0/default.jpg
+crop_jpg	pct:10,10,50,50/512,/0/default.jpg
+square_jpg	square/512,512/0/default.jpg
+rotate_jpg	full/512,/90/default.jpg
+gray_jpg	full/512,/0/gray.jpg
+bitonal_png	full/512,/0/bitonal.png

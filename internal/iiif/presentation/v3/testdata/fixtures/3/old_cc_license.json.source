@@ -1,0 +1,4 @@
+source: https://github.com/IIIF/presentation-validator
+sha: 5fccfbc01ac6627ecdb81f845a595b5ea295f86d
+path: fixtures/3/old_cc_license.json
+sha256: 78b9c4ed91535d3d14b1da0806d5dd167383414a6803f5adb43758df33104dc2

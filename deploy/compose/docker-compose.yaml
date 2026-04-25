@@ -1,0 +1,47 @@
+services:
+  mariadb:
+    image: mariadb:11
+    environment:
+      MARIADB_DATABASE: ${MARIADB_DATABASE:-scribe}
+      MARIADB_USER: ${MARIADB_USER:-scribe}
+      MARIADB_PASSWORD: ${MARIADB_PASSWORD:-scribe}
+      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD:-scribe-root}
+    volumes:
+      - mariadb:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mariadb-admin ping -h 127.0.0.1 -u$${MARIADB_USER} -p$${MARIADB_PASSWORD} --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  triplet:
+    image: ${TRIPLET_IMAGE:-ghcr.io/libops/triplet:latest}
+    # Or build from the repo root:
+    # build:
+    #   context: ../..
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./config.yaml:/etc/triplet/config.yaml:ro
+      - ./images:/var/lib/triplet/images:ro
+      - ./presentation:/var/lib/triplet/presentation:ro
+      - ./cache:/var/lib/triplet/cache
+      - ./source-cache:/var/lib/triplet/source-cache
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+      - seccomp:../seccomp-triplet.json
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "triplet", "-healthcheck", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+volumes:
+  mariadb:
