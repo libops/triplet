@@ -1,0 +1,27 @@
+services:
+  triplet:
+    image: ${TRIPLET_IMAGE:-ghcr.io/libops/triplet:latest}
+    # Or build from the repo root:
+    # build:
+    #   context: ../..
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./config.yaml:/etc/triplet/config.yaml:ro
+      - ./images:/var/lib/triplet/images:ro
+      - ./presentation:/var/lib/triplet/presentation:ro
+      - ./cache:/var/lib/triplet/cache
+      - ./source-cache:/var/lib/triplet/source-cache
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "triplet", "-config", "/etc/triplet/config.yaml", "-help"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped

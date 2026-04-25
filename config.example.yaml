@@ -1,0 +1,96 @@
+# triplet configuration. The full surface lives here; everything is optional
+# unless noted. There are no environment-variable overrides by design — if you
+# need templating, render this file before launch.
+
+server:
+  # Address the HTTP server binds to.
+  listen: ":8080"
+  read_timeout: 30s
+  write_timeout: 120s
+  # Public base URL the server is reachable at. Used to build canonical
+  # `id` fields in info.json and Link headers. Required.
+  public_base_url: "http://localhost:8080"
+
+logging:
+  # One of: debug, info, warn, error.
+  level: info
+  # One of: json, text.
+  format: json
+
+vips:
+  # 0 lets libvips choose based on available cores.
+  concurrency: 0
+  # 0 disables the libvips operation cache. triplet's own derivative/source
+  # caches are usually the right place to retain work across requests.
+  cache_max_mem: 0
+  cache_max_files: 0
+  report_leaks: false
+  # Recommended hardening flag from the libvips security review.
+  block_untrusted: true
+
+iiif:
+  image:
+    enabled: true
+    # URL prefix the Image API is mounted at. The IIIF spec is agnostic;
+    # `/iiif/3` is the convention used by most servers and viewers.
+    prefix: /iiif/3
+    # Refuse requests whose decoded output would exceed this many pixels.
+    # Cheap protection against tile-bomb DoS. 0 disables the check.
+    max_output_pixels: 100000000
+    # Advertise additional transform limits in info.json so clients can avoid
+    # over-large requests up front. 0 omits the field.
+    max_width: 0
+    max_height: 0
+  presentation:
+    enabled: false
+    prefix: /presentation/v3
+    # Filesystem-backed presentation store. Manifests live at
+    # {root}/{itemID}/manifest.json. Annotation pages live at
+    # {root}/{itemID}/canvas/{canvasID}/annotations.json.
+    root: ./testdata/presentation
+
+# Identifier resolution. Exactly one source must be the default; additional
+# sources are selected by identifier scheme (e.g. `https://…`, `gs://…`).
+sources:
+  default: file
+  file:
+    # Filesystem root that identifiers resolve against. Identifiers are
+    # treated as paths relative to this root; `..` is rejected.
+    root: ./testdata/images
+  # Optional HTTP(S) source. When configured alongside the file source,
+  # `http://...` and `https://...` identifiers are routed here automatically.
+  # http:
+  #   allowed_hosts: [example.org, iiif.example.edu]
+  #   request_timeout: 30s
+  #   max_bytes: 52428800
+  # gcs:
+  #   bucket_url: gs://my-bucket
+  #   prefix: images
+
+cache:
+  # Derivative cache. Configure either a filesystem root or a blob bucket URL.
+  root: ./var/cache/triplet
+  # bucket_url: gs://triplet-cache
+  # prefix: derivatives
+  # Best-effort eviction target for the file cache. 0 disables size-based
+  # eviction.
+  max_bytes: 1073741824
+  # Optional source cache for fetched source bytes (primarily HTTP
+  # identifiers). Configure either a filesystem root or a blob bucket URL.
+  source_root: ./var/cache/triplet-sources
+  # source_bucket_url: gs://triplet-source-cache
+  # source_prefix: sources
+  # Best-effort eviction target for the source cache. 0 disables size-based
+  # eviction.
+  source_max_bytes: 1073741824
+
+extensions:
+  # Non-spec endpoint: POST multipart {image, region, size, rotation, quality, format}
+  # → encoded derivative. Same pipeline as the spec routes.
+  transform:
+    enabled: true
+    max_upload_bytes: 52428800   # 50 MiB
+  # Non-spec endpoint: POST bytes → mints an opaque identifier resolvable
+  # via the standard /iiif/3/{id}/... routes.
+  uploads:
+    enabled: false
