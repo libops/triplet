@@ -1,0 +1,4 @@
+source: https://github.com/IIIF/image-validator
+sha: 1740893f1fb22960142071a9f3d1c99122a190c7
+path: tests/json/info-3.0-logo.json
+sha256: b7abf56449ccfbefef7f8e37f62ae96c735098d2e63af9edb354d176f5a6ac9f

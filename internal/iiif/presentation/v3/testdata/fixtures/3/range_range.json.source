@@ -1,0 +1,4 @@
+source: https://github.com/IIIF/presentation-validator
+sha: 5fccfbc01ac6627ecdb81f845a595b5ea295f86d
+path: fixtures/3/range_range.json
+sha256: 4113e33ca4d4b7886a7acdd3b80539f12a4db560434363e40418e8968e3c24a9

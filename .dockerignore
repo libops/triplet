@@ -1,0 +1,12 @@
+.git
+.cache
+bin
+coverage.out
+results
+
+deploy/compose/cache
+deploy/compose/images
+deploy/compose/presentation
+deploy/compose/source-cache
+
+fixtures/benchmark

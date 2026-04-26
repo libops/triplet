@@ -1,0 +1,4 @@
+source: https://github.com/IIIF/presentation-validator
+sha: 5fccfbc01ac6627ecdb81f845a595b5ea295f86d
+path: fixtures/3/broken_simple_image.json
+sha256: 70930101e828bb85ae97fae8d49ed206da4e3d847480aa8f34713ab5c5727e6c
