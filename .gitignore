@@ -1,0 +1,13 @@
+bin/
+build/
+dist/
+coverage.out
+*.test
+.DS_Store
+.idea/
+.vscode/
+.cache
+fixtures/benchmark/*.tiff
+fixtures/benchmark/images/*
+!fixtures/benchmark/images/.gitkeep
+deploy/compose/cache/

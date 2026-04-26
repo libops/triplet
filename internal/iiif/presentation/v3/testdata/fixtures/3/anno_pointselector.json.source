@@ -1,0 +1,4 @@
+source: https://github.com/IIIF/presentation-validator
+sha: 5fccfbc01ac6627ecdb81f845a595b5ea295f86d
+path: fixtures/3/anno_pointselector.json
+sha256: 4ac6f12717e63e255aa8f3e6febf7c757e6348d2705b4a89fe10b194be1351b3

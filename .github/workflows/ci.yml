@@ -1,0 +1,82 @@
+name: build-push
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  lint-test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Set up Go
+        uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6
+        with:
+          go-version: ">=1.26.2"
+
+      - name: Cache Go tools
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+            ~/go/bin
+          key: ${{ runner.os }}-golang-${{ hashFiles('go.sum', 'Makefile') }}
+          restore-keys: |
+            ${{ runner.os }}-golang-
+
+      - name: Install cgo dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libvips-dev pkg-config
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@1e7e51e771db61008b38414a730f564565cf7c20 # v9
+        with:
+          version: latest
+          install-only: true
+
+      - name: lint
+        run: make lint
+
+      - name: test
+        run: make test-race
+
+      - name: asan
+        run: make test-asan
+
+  push-images:
+    needs: [ lint-test ]
+    uses: libops/.github/.github/workflows/build-push.yaml@main
+    permissions:
+      contents: read
+      packages: write
+    secrets: inherit
+
+  integration-test:
+    needs: [ lint-test, push-images ]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Set branch image tag
+        shell: bash
+        run: echo "GIT_BRANCH=${GITHUB_REF_NAME//\//-}" >> "$GITHUB_ENV"
+
+      - name: Install conformance dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libmagic1 python3-venv
+
+      - name: integration tests
+        run: make test-integration
+
+      - name: Show compose logs on failure
+        if: failure()
+        working-directory: deploy/compose
+        run: docker compose -f docker-compose.yaml -p triplet-integration logs
+          --no-color
