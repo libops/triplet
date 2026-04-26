@@ -24,7 +24,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libjpeg62-turbo-dev \
     libjxl-dev \
     liblcms2-dev \
-    libmagickcore-6.q16-dev \
+    ibmagickcore-7.q16-dev \
     libopenexr-dev \
     libopenjp2-7-dev \
     liborc-0.4-dev \
