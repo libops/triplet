@@ -10,6 +10,13 @@ cp /path/to/your/sample.png images/
 docker compose up
 ```
 
+MariaDB is behind the `integration` Compose profile so normal image-serving
+smoke runs only start triplet. To start MariaDB too:
+
+```sh
+COMPOSE_PROFILES=integration docker compose up -d mariadb
+```
+
 To test a locally built image instead of GHCR:
 
 ```sh

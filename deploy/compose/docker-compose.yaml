@@ -1,6 +1,8 @@
 services:
   mariadb:
     image: mariadb:11
+    profiles:
+      - integration
     environment:
       MARIADB_DATABASE: ${MARIADB_DATABASE:-scribe}
       MARIADB_USER: ${MARIADB_USER:-scribe}

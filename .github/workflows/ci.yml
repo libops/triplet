@@ -58,8 +58,3 @@ jobs:
         if: failure()
         working-directory: deploy/compose
         run: docker compose logs --no-color
-
-      - name: Tear down compose stack
-        if: always()
-        working-directory: deploy/compose
-        run: docker compose down -v

@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-FROM debian:bookworm AS vips-build
+FROM debian:trixie-20260421@sha256:35b8ff74ead4880f22090b617372daff0ccae742eb5674455d542bef71ef1999 AS vips-build
 
 ARG VIPS_VERSION=8.18.0
 
@@ -24,7 +24,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libjpeg62-turbo-dev \
     libjxl-dev \
     liblcms2-dev \
-    libmagickcore-6.q16-dev \
+    ibmagickcore-7.q16-dev \
     libopenexr-dev \
     libopenjp2-7-dev \
     liborc-0.4-dev \

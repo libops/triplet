@@ -11,6 +11,9 @@ fi
 if [ -n "${COMPOSE_PROJECT_NAME:-}" ]; then
   COMPOSE_ARGS+=(-p "$COMPOSE_PROJECT_NAME")
 fi
+if [ -n "${COMPOSE_PROFILES:-}" ]; then
+  export COMPOSE_PROFILES
+fi
 
 mkdir -p .cache/go-build .cache/go-mod
 
