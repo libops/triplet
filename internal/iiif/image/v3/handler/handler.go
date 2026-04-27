@@ -103,6 +103,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	r = r.WithContext(storage.ContextWithAuthHeaders(r.Context(), r.Header))
 	rest := strings.TrimPrefix(r.URL.Path, h.prefix)
 	req, err := parse.Parse(rest)
 	if err != nil {
@@ -129,6 +130,10 @@ func (h *Handler) serveInfo(w http.ResponseWriter, r *http.Request, identifier s
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "identifier not found")
+			return
+		}
+		if errors.Is(err, storage.ErrForbidden) {
+			writeError(w, http.StatusForbidden, "identifier forbidden")
 			return
 		}
 		if errors.Is(err, pipeline.ErrBadRequest) {
@@ -165,6 +170,10 @@ func (h *Handler) serveImage(w http.ResponseWriter, r *http.Request, req parse.R
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "identifier not found")
+			return
+		}
+		if errors.Is(err, storage.ErrForbidden) {
+			writeError(w, http.StatusForbidden, "identifier forbidden")
 			return
 		}
 		h.logger.Error("read image metadata", "identifier", redact.Identifier(req.Identifier), "identifier_hash", redact.Hash(req.Identifier), "err", err)
@@ -231,6 +240,10 @@ func (h *Handler) serveImage(w http.ResponseWriter, r *http.Request, req parse.R
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "identifier not found")
+			return
+		}
+		if errors.Is(err, storage.ErrForbidden) {
+			writeError(w, http.StatusForbidden, "identifier forbidden")
 			return
 		}
 		if errors.Is(err, pipeline.ErrBadRequest) {

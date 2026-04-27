@@ -117,6 +117,27 @@ sources:
     # Filesystem root that identifiers resolve against. Identifiers are
     # treated as paths relative to this root; `..` is rejected.
     root: ./testdata/images
+    # Optional local lookup for URL identifiers before HTTP streaming. When an
+    # identifier starts with one of these decoded URL prefixes, Triplet strips
+    # the prefix and checks the remaining path under the mapping root first.
+    # url_mappings:
+    #   - prefix: https://islandora-stage.lib.lehigh.edu/system/files
+    #     root: /mnt/foo
+    #     auth_probe: true
+    #     auth_anonymous_cache_ttl: 720h
+    #     auth_authenticated_cache_ttl: 168h
+    #     auth_cache_max_entries: 4096
+    #   - prefix: https://islandora-stage.lib.lehigh.edu/fedora
+    #     root: /bar
+    #     ocfl: true
+    #     auth_probe: true
+    # `ocfl: true` means the stripped path is a Fedora resource path stored
+    # under an OCFL root, using extensions/0005-mutable-head/head/inventory.json.
+    # `auth_probe: true` means Triplet forwards browser Cookie/Authorization
+    # headers to the original URL and requires 200/206 before reading locally.
+    # Auth probes are tiered: anonymous is checked first and cached separately;
+    # credentialed probes only run when anonymous access is denied. Long TTLs
+    # are explicit access-staleness windows; defaults are short when omitted.
   # Optional HTTP(S) source. When configured alongside the file source,
   # `http://...` and `https://...` identifiers are routed here automatically.
   #

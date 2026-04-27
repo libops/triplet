@@ -28,6 +28,9 @@ func TestLoad(t *testing.T) {
 			body: `
 server:
   public_base_url: http://localhost:8080
+iiif:
+  image:
+    enabled: true
 sources:
   default: file
   file:
@@ -92,6 +95,146 @@ sources:
     allowed_hosts: [example.org]
     max_bytes: 1048576
 `,
+		},
+		{
+			name: "file url prefixes valid",
+			body: `
+server:
+  public_base_url: http://localhost:8080
+sources:
+  default: http
+  file:
+    root: /tmp
+    url_prefixes:
+      - https://repo.example.edu/system/files
+    url_prefixes_are_ocfl: true
+  http:
+    allowed_hosts: [repo.example.edu]
+`,
+		},
+		{
+			name: "file url mappings valid",
+			body: `
+server:
+  public_base_url: http://localhost:8080
+sources:
+  default: http
+  file:
+    url_mappings:
+      - prefix: https://repo.example.edu/system/files
+        root: /mnt/foo
+      - prefix: https://repo.example.edu/fedora
+        root: /bar
+        ocfl: true
+        auth_probe: true
+        auth_anonymous_cache_ttl: 720h
+        auth_authenticated_cache_ttl: 168h
+        auth_cache_max_entries: 4096
+  http:
+    allowed_hosts: [repo.example.edu]
+`,
+		},
+		{
+			name: "file url mapping requires root",
+			body: `
+server:
+  public_base_url: http://localhost:8080
+sources:
+  default: http
+  file:
+    url_mappings:
+      - prefix: https://repo.example.edu/system/files
+  http:
+    allowed_hosts: [repo.example.edu]
+`,
+			wantErr: "sources.file.url_mappings[0].root is required",
+		},
+		{
+			name: "file url mapping rejects negative auth ttl",
+			body: `
+server:
+  public_base_url: http://localhost:8080
+sources:
+  default: http
+  file:
+    url_mappings:
+      - prefix: https://repo.example.edu/system/files
+        root: /tmp
+        auth_probe: true
+        auth_cache_ttl: -1s
+  http:
+    allowed_hosts: [repo.example.edu]
+`,
+			wantErr: "sources.file.url_mappings[0].auth_cache_ttl",
+		},
+		{
+			name: "file url mapping rejects negative authenticated auth ttl",
+			body: `
+server:
+  public_base_url: http://localhost:8080
+sources:
+  default: http
+  file:
+    url_mappings:
+      - prefix: https://repo.example.edu/system/files
+        root: /tmp
+        auth_probe: true
+        auth_authenticated_cache_ttl: -1s
+  http:
+    allowed_hosts: [repo.example.edu]
+`,
+			wantErr: "sources.file.url_mappings[0].auth_authenticated_cache_ttl",
+		},
+		{
+			name: "file url mapping rejects negative auth max entries",
+			body: `
+server:
+  public_base_url: http://localhost:8080
+sources:
+  default: http
+  file:
+    url_mappings:
+      - prefix: https://repo.example.edu/system/files
+        root: /tmp
+        auth_probe: true
+        auth_cache_max_entries: -1
+  http:
+    allowed_hosts: [repo.example.edu]
+`,
+			wantErr: "sources.file.url_mappings[0].auth_cache_max_entries",
+		},
+		{
+			name: "file url mapping requires http source",
+			body: `
+server:
+  public_base_url: http://localhost:8080
+iiif:
+  image:
+    enabled: true
+sources:
+  default: file
+  file:
+    root: /tmp
+    url_mappings:
+      - prefix: https://repo.example.edu/system/files
+        root: /tmp
+`,
+			wantErr: "sources.http is required when sources.file URL mappings are configured",
+		},
+		{
+			name: "file url prefix requires root",
+			body: `
+server:
+  public_base_url: http://localhost:8080
+sources:
+  default: http
+  file:
+    url_prefixes:
+      - https://repo.example.edu/system/files
+  http:
+    allowed_hosts: [repo.example.edu]
+`,
+			wantErr: "sources.file.root is required when sources.file.url_prefixes is configured",
 		},
 		{
 			name: "gcs source valid",

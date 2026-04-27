@@ -229,6 +229,13 @@ func buildSource(cfg *config.Config) (storage.Opener, func(), error) {
 			cfg.Sources.HTTP.MaxBytes,
 		)
 		op.AllowPrivateHosts = cfg.Sources.HTTP.AllowPrivateHosts
+		authOp := storage.NewHTTPOpener(
+			cfg.Sources.HTTP.AllowedHosts,
+			cfg.Sources.HTTP.RequestTimeout,
+			cfg.Sources.HTTP.MaxBytes,
+		)
+		authOp.AllowPrivateHosts = cfg.Sources.HTTP.AllowPrivateHosts
+		authOp.ForwardAuthHeaders = true
 		httpOp = op
 		if cfg.Cache.SourceRoot != "" || cfg.Cache.SourceBucketURL != "" {
 			sourceCache, err := buildSourceCache(ctx, cfg)
@@ -249,6 +256,17 @@ func buildSource(cfg *config.Config) (storage.Opener, func(), error) {
 				Store:          sourceCache,
 				StaleAfter:     cfg.Cache.SourceStaleAfter,
 				RefreshContext: refreshCtx,
+			}
+		}
+		localURLMappings, err := buildLocalURLMappings(cfg, fileOp)
+		if err != nil {
+			return nil, nil, err
+		}
+		if len(localURLMappings) > 0 {
+			httpOp = &storage.LocalURLFallback{
+				Mappings:     localURLMappings,
+				Fallback:     httpOp,
+				AuthFallback: authOp,
 			}
 		}
 	}
@@ -298,6 +316,43 @@ func buildSource(cfg *config.Config) (storage.Opener, func(), error) {
 		return &storage.Multiplex{Routes: routes, Default: defaultOp}, cleanup, nil
 	}
 	return defaultOp, cleanup, nil
+}
+
+func buildLocalURLMappings(cfg *config.Config, fileOp storage.Opener) ([]storage.LocalURLMapping, error) {
+	if cfg.Sources.File == nil {
+		return nil, nil
+	}
+	var mappings []storage.LocalURLMapping
+	for _, mapping := range cfg.Sources.File.URLMappings {
+		op, err := storage.NewFileOpener(mapping.Root)
+		if err != nil {
+			return nil, err
+		}
+		mappings = append(mappings, storage.LocalURLMapping{
+			Prefix:                    mapping.Prefix,
+			File:                      op,
+			OCFL:                      mapping.OCFL,
+			AuthProbe:                 mapping.AuthProbe,
+			AuthCacheTTL:              mapping.AuthCacheTTL,
+			AuthAnonymousCacheTTL:     mapping.AuthAnonymousCacheTTL,
+			AuthAuthenticatedCacheTTL: mapping.AuthAuthenticatedCacheTTL,
+			AuthCacheMaxEntries:       mapping.AuthCacheMaxEntries,
+		})
+	}
+	if len(cfg.Sources.File.URLPrefixes) > 0 {
+		fileOpener, ok := fileOp.(*storage.FileOpener)
+		if !ok {
+			return nil, fmt.Errorf("sources.file.root is required when sources.file.url_prefixes is configured")
+		}
+		for _, prefix := range cfg.Sources.File.URLPrefixes {
+			mappings = append(mappings, storage.LocalURLMapping{
+				Prefix: prefix,
+				File:   fileOpener,
+				OCFL:   cfg.Sources.File.URLPrefixesAreOCFL,
+			})
+		}
+	}
+	return mappings, nil
 }
 
 func buildDerivativeCache(cfg *config.Config) (cache.Store, error) {

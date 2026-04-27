@@ -32,6 +32,9 @@ type HTTPOpener struct {
 	// AllowPrivateHosts permits loopback, link-local, private, and other
 	// non-public upstream addresses. Keep false for public deployments.
 	AllowPrivateHosts bool
+	// ForwardAuthHeaders forwards Cookie and Authorization headers from the
+	// request context. Only enable this for trusted, per-request fallbacks.
+	ForwardAuthHeaders bool
 }
 
 // NewHTTPOpener constructs an HTTPOpener with sane timeouts.
@@ -71,6 +74,7 @@ func (h *HTTPOpener) Open(ctx context.Context, identifier string) (io.ReadSeekCl
 	}
 	req.Header.Set("User-Agent", h.UserAgent)
 	req.Header.Set("Accept", "image/*")
+	h.setForwardedAuthHeaders(ctx, req.Header)
 
 	resp, err := h.client().Do(req)
 	if err != nil {
@@ -82,6 +86,8 @@ func (h *HTTPOpener) Open(ctx context.Context, identifier string) (io.ReadSeekCl
 	case http.StatusOK:
 	case http.StatusNotFound:
 		return nil, Meta{}, fmt.Errorf("%w: upstream 404", ErrNotFound)
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return nil, Meta{}, fmt.Errorf("%w: upstream status %d", ErrForbidden, resp.StatusCode)
 	default:
 		return nil, Meta{}, fmt.Errorf("http source %q: upstream status %d", target.Redacted(), resp.StatusCode)
 	}
@@ -129,6 +135,7 @@ func (h *HTTPOpener) Meta(ctx context.Context, identifier string) (Meta, error) 
 	}
 	req.Header.Set("User-Agent", h.UserAgent)
 	req.Header.Set("Accept", "image/*")
+	h.setForwardedAuthHeaders(ctx, req.Header)
 
 	resp, err := h.client().Do(req)
 	if err != nil {
@@ -157,6 +164,8 @@ func (h *HTTPOpener) Meta(ctx context.Context, identifier string) (Meta, error) 
 		return Meta{}, fmt.Errorf("http source %q: metadata unavailable", target.Redacted())
 	case http.StatusNotFound:
 		return Meta{}, fmt.Errorf("%w: upstream 404", ErrNotFound)
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return Meta{}, fmt.Errorf("%w: upstream status %d", ErrForbidden, resp.StatusCode)
 	default:
 		return Meta{}, fmt.Errorf("http source %q: upstream status %d", target.Redacted(), resp.StatusCode)
 	}
@@ -184,6 +193,7 @@ func (h *HTTPOpener) openRange(ctx context.Context, target *url.URL) (io.ReadSee
 	req.Header.Set("User-Agent", h.UserAgent)
 	req.Header.Set("Accept", "image/*")
 	req.Header.Set("Range", "bytes=0-0")
+	h.setForwardedAuthHeaders(ctx, req.Header)
 
 	resp, err := h.client().Do(req)
 	if err != nil {
@@ -197,6 +207,8 @@ func (h *HTTPOpener) openRange(ctx context.Context, target *url.URL) (io.ReadSee
 		return nil, Meta{}, false, nil
 	case http.StatusNotFound:
 		return nil, Meta{}, true, fmt.Errorf("%w: upstream 404", ErrNotFound)
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return nil, Meta{}, true, fmt.Errorf("%w: upstream status %d", ErrForbidden, resp.StatusCode)
 	default:
 		return nil, Meta{}, true, fmt.Errorf("http source %q: upstream status %d", target.Redacted(), resp.StatusCode)
 	}
@@ -221,8 +233,24 @@ func (h *HTTPOpener) openRange(ctx context.Context, target *url.URL) (io.ReadSee
 		target: target.String(),
 		ua:     h.UserAgent,
 		accept: "image/*",
+		auth:   h.forwardedAuthHeaders(ctx),
 		size:   size,
 	}, meta, true, nil
+}
+
+func (h *HTTPOpener) setForwardedAuthHeaders(ctx context.Context, dst http.Header) {
+	for name, values := range h.forwardedAuthHeaders(ctx) {
+		for _, value := range values {
+			dst.Add(name, value)
+		}
+	}
+}
+
+func (h *HTTPOpener) forwardedAuthHeaders(ctx context.Context) http.Header {
+	if !h.ForwardAuthHeaders {
+		return nil
+	}
+	return authHeadersFromContext(ctx)
 }
 
 func (h *HTTPOpener) client() *http.Client {
@@ -415,6 +443,7 @@ type httpRangeReadSeekCloser struct {
 	target string
 	ua     string
 	accept string
+	auth   http.Header
 	size   int64
 	off    int64
 	closed bool
@@ -441,6 +470,11 @@ func (r *httpRangeReadSeekCloser) Read(p []byte) (int, error) {
 	req.Header.Set("User-Agent", r.ua)
 	req.Header.Set("Accept", r.accept)
 	req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", r.off, end))
+	for name, values := range r.auth {
+		for _, value := range values {
+			req.Header.Add(name, value)
+		}
+	}
 	resp, err := r.client.Do(req)
 	if err != nil {
 		return 0, err

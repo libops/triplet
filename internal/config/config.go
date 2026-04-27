@@ -120,7 +120,22 @@ type Sources struct {
 
 // FileSource resolves identifiers as paths under Root.
 type FileSource struct {
-	Root string `yaml:"root"`
+	Root               string           `yaml:"root"`
+	URLPrefixes        []string         `yaml:"url_prefixes"`
+	URLPrefixesAreOCFL bool             `yaml:"url_prefixes_are_ocfl"`
+	URLMappings        []FileURLMapping `yaml:"url_mappings"`
+}
+
+// FileURLMapping maps a URL identifier prefix to a local filesystem root.
+type FileURLMapping struct {
+	Prefix                    string        `yaml:"prefix"`
+	Root                      string        `yaml:"root"`
+	OCFL                      bool          `yaml:"ocfl"`
+	AuthProbe                 bool          `yaml:"auth_probe"`
+	AuthCacheTTL              time.Duration `yaml:"auth_cache_ttl"`
+	AuthAnonymousCacheTTL     time.Duration `yaml:"auth_anonymous_cache_ttl"`
+	AuthAuthenticatedCacheTTL time.Duration `yaml:"auth_authenticated_cache_ttl"`
+	AuthCacheMaxEntries       int           `yaml:"auth_cache_max_entries"`
 }
 
 // HTTPSource resolves identifiers that are HTTP(S) URLs.
@@ -408,6 +423,42 @@ func (c *Config) validate() error {
 		}
 		if c.Sources.HTTP.MaxBytes < 0 {
 			return errors.New("sources.http.max_bytes: must be >= 0")
+		}
+	}
+	if c.Sources.File != nil {
+		for _, prefix := range c.Sources.File.URLPrefixes {
+			if strings.TrimSpace(prefix) == "" {
+				return errors.New("sources.file.url_prefixes: entries must not be empty")
+			}
+		}
+		if len(c.Sources.File.URLPrefixes) > 0 && c.Sources.File.Root == "" {
+			return errors.New("sources.file.root is required when sources.file.url_prefixes is configured")
+		}
+		if c.Sources.File.URLPrefixesAreOCFL && len(c.Sources.File.URLPrefixes) == 0 {
+			return errors.New("sources.file.url_prefixes is required when sources.file.url_prefixes_are_ocfl = true")
+		}
+		if c.IIIF.Image.Enabled && (len(c.Sources.File.URLPrefixes) > 0 || len(c.Sources.File.URLMappings) > 0) && c.Sources.HTTP == nil {
+			return errors.New("sources.http is required when sources.file URL mappings are configured")
+		}
+		for i, mapping := range c.Sources.File.URLMappings {
+			if strings.TrimSpace(mapping.Prefix) == "" {
+				return fmt.Errorf("sources.file.url_mappings[%d].prefix is required", i)
+			}
+			if mapping.Root == "" {
+				return fmt.Errorf("sources.file.url_mappings[%d].root is required", i)
+			}
+			if mapping.AuthCacheTTL < 0 {
+				return fmt.Errorf("sources.file.url_mappings[%d].auth_cache_ttl: must be >= 0", i)
+			}
+			if mapping.AuthAnonymousCacheTTL < 0 {
+				return fmt.Errorf("sources.file.url_mappings[%d].auth_anonymous_cache_ttl: must be >= 0", i)
+			}
+			if mapping.AuthAuthenticatedCacheTTL < 0 {
+				return fmt.Errorf("sources.file.url_mappings[%d].auth_authenticated_cache_ttl: must be >= 0", i)
+			}
+			if mapping.AuthCacheMaxEntries < 0 {
+				return fmt.Errorf("sources.file.url_mappings[%d].auth_cache_max_entries: must be >= 0", i)
+			}
 		}
 	}
 	if c.Sources.GCS != nil && c.Sources.GCS.BucketURL == "" {
