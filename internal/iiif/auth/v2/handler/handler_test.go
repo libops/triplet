@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/libops/triplet/internal/cors"
@@ -60,5 +61,19 @@ func TestTokenPermitAll(t *testing.T) {
 	}
 	if got.Context != types.ContextAuth2 {
 		t.Fatalf("token = %#v", got)
+	}
+}
+
+func TestRejectsOverlongItemID(t *testing.T) {
+	srv := setupAuthServer()
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/auth/v2/" + strings.Repeat("a", 256) + "/probe")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d", resp.StatusCode)
 	}
 }

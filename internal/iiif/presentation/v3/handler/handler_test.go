@@ -212,6 +212,36 @@ func TestAnnotationPagePutValidationError(t *testing.T) {
 	}
 }
 
+func TestRejectsOverlongIDs(t *testing.T) {
+	srv := setupTestServerWithWrites(t, true, "test-token")
+	defer srv.Close()
+	tooLong := strings.Repeat("a", 256)
+
+	resp, err := http.Get(srv.URL + "/presentation/v3/" + tooLong + "/manifest")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("manifest status = %d", resp.StatusCode)
+	}
+
+	body := `{"@context":["http://iiif.io/api/presentation/3/context.json"],"id":"http://example.test/annotations","type":"AnnotationPage","items":[]}`
+	req, err := http.NewRequest(http.MethodPut, srv.URL+"/presentation/v3/item-1/canvas/"+tooLong+"/annotations", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer test-token")
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("annotation status = %d", resp.StatusCode)
+	}
+}
+
 func TestManifestNotFound(t *testing.T) {
 	srv := setupTestServer(t)
 	defer srv.Close()

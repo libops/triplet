@@ -41,18 +41,11 @@ func (o *GCSOpener) Close() error {
 
 // Open implements Opener.
 func (o *GCSOpener) Open(ctx context.Context, identifier string) (io.ReadSeekCloser, Meta, error) {
-	key, err := objectKey(o.prefix, identifier)
+	key, attrs, meta, err := o.meta(ctx, identifier)
 	if err != nil {
 		return nil, Meta{}, err
 	}
 	obj := o.client.Bucket(o.bucket).Object(key)
-	attrs, err := obj.Attrs(ctx)
-	if err != nil {
-		if isGCSNotFound(err) {
-			return nil, Meta{}, ErrNotFound
-		}
-		return nil, Meta{}, err
-	}
 	if o.maxBytes > 0 && attrs.Size > o.maxBytes {
 		return nil, Meta{}, fmt.Errorf("gcs source %q: response exceeds max_bytes %d", key, o.maxBytes)
 	}
@@ -89,7 +82,32 @@ func (o *GCSOpener) Open(ctx context.Context, identifier string) (io.ReadSeekClo
 	if _, err = f.Seek(0, io.SeekStart); err != nil {
 		return nil, Meta{}, err
 	}
-	return &tempReadSeekCloser{File: f}, Meta{
+	return &tempReadSeekCloser{File: f}, meta, nil
+}
+
+// Meta implements MetaReader.
+func (o *GCSOpener) Meta(ctx context.Context, identifier string) (Meta, error) {
+	_, _, meta, err := o.meta(ctx, identifier)
+	return meta, err
+}
+
+func (o *GCSOpener) meta(ctx context.Context, identifier string) (string, *gcs.ObjectAttrs, Meta, error) {
+	key, err := objectKey(o.prefix, identifier)
+	if err != nil {
+		return "", nil, Meta{}, err
+	}
+	obj := o.client.Bucket(o.bucket).Object(key)
+	attrs, err := obj.Attrs(ctx)
+	if err != nil {
+		if isGCSNotFound(err) {
+			return "", nil, Meta{}, ErrNotFound
+		}
+		return "", nil, Meta{}, err
+	}
+	if o.maxBytes > 0 && attrs.Size > o.maxBytes {
+		return "", nil, Meta{}, fmt.Errorf("gcs source %q: response exceeds max_bytes %d", key, o.maxBytes)
+	}
+	return key, attrs, Meta{
 		ContentType: attrs.ContentType,
 		Size:        attrs.Size,
 		ModTime:     attrs.Updated,

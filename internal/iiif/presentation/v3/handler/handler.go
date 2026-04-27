@@ -13,6 +13,7 @@ import (
 	"github.com/libops/triplet/internal/cors"
 	"github.com/libops/triplet/internal/iiif/presentation/v3/store"
 	"github.com/libops/triplet/internal/iiif/presentation/v3/validate"
+	"github.com/libops/triplet/internal/redact"
 )
 
 // Handler serves a minimal Presentation API v3 surface.
@@ -82,7 +83,7 @@ func (h *Handler) serveManifest(w http.ResponseWriter, r *http.Request, rawItemI
 		return
 	}
 	itemID, err := url.PathUnescape(rawItemID)
-	if err != nil || itemID == "" {
+	if err != nil || !validRequestID(itemID) {
 		h.writeError(w, r, http.StatusBadRequest, "invalid item id")
 		return
 	}
@@ -92,12 +93,12 @@ func (h *Handler) serveManifest(w http.ResponseWriter, r *http.Request, rawItemI
 			h.writeError(w, r, http.StatusNotFound, "manifest not found")
 			return
 		}
-		h.logger.Error("read manifest", "item_id", itemID, "err", err)
+		h.logger.Error("read manifest", "item_id", redact.Identifier(itemID), "item_id_hash", redact.Hash(itemID), "err", err)
 		h.writeError(w, r, http.StatusInternalServerError, "failed to read manifest")
 		return
 	}
 	if err := validate.ValidateManifestBytes(body); err != nil {
-		h.logger.Error("validate manifest", "item_id", itemID, "err", err)
+		h.logger.Error("validate manifest", "item_id", redact.Identifier(itemID), "item_id_hash", redact.Hash(itemID), "err", err)
 		h.writeError(w, r, http.StatusInternalServerError, "invalid manifest")
 		return
 	}
@@ -107,18 +108,18 @@ func (h *Handler) serveManifest(w http.ResponseWriter, r *http.Request, rawItemI
 		return
 	}
 	if _, err := w.Write(body); err != nil {
-		h.logger.Warn("write manifest", "item_id", itemID, "err", err)
+		h.logger.Warn("write manifest", "item_id", redact.Identifier(itemID), "item_id_hash", redact.Hash(itemID), "err", err)
 	}
 }
 
 func (h *Handler) serveAnnotationPage(w http.ResponseWriter, r *http.Request, rawItemID, rawCanvasID string) {
 	itemID, err := url.PathUnescape(rawItemID)
-	if err != nil || itemID == "" {
+	if err != nil || !validRequestID(itemID) {
 		h.writeError(w, r, http.StatusBadRequest, "invalid item id")
 		return
 	}
 	canvasID, err := url.PathUnescape(rawCanvasID)
-	if err != nil || canvasID == "" {
+	if err != nil || !validRequestID(canvasID) {
 		h.writeError(w, r, http.StatusBadRequest, "invalid canvas id")
 		return
 	}
@@ -148,12 +149,12 @@ func (h *Handler) getAnnotationPage(w http.ResponseWriter, r *http.Request, item
 			h.writeError(w, r, http.StatusNotFound, "annotation page not found")
 			return
 		}
-		h.logger.Error("read annotation page", "item_id", itemID, "canvas_id", canvasID, "err", err)
+		h.logger.Error("read annotation page", "item_id", redact.Identifier(itemID), "item_id_hash", redact.Hash(itemID), "canvas_id", redact.Identifier(canvasID), "canvas_id_hash", redact.Hash(canvasID), "err", err)
 		h.writeError(w, r, http.StatusInternalServerError, "failed to read annotation page")
 		return
 	}
 	if err := validate.ValidateAnnotationPageBytes(body); err != nil {
-		h.logger.Error("validate annotation page", "item_id", itemID, "canvas_id", canvasID, "err", err)
+		h.logger.Error("validate annotation page", "item_id", redact.Identifier(itemID), "item_id_hash", redact.Hash(itemID), "canvas_id", redact.Identifier(canvasID), "canvas_id_hash", redact.Hash(canvasID), "err", err)
 		h.writeError(w, r, http.StatusInternalServerError, "invalid annotation page")
 		return
 	}
@@ -163,7 +164,7 @@ func (h *Handler) getAnnotationPage(w http.ResponseWriter, r *http.Request, item
 		return
 	}
 	if _, err := w.Write(body); err != nil {
-		h.logger.Warn("write annotation page", "item_id", itemID, "canvas_id", canvasID, "err", err)
+		h.logger.Warn("write annotation page", "item_id", redact.Identifier(itemID), "item_id_hash", redact.Hash(itemID), "canvas_id", redact.Identifier(canvasID), "canvas_id_hash", redact.Hash(canvasID), "err", err)
 	}
 }
 
@@ -178,7 +179,7 @@ func (h *Handler) putAnnotationPage(w http.ResponseWriter, r *http.Request, item
 		return
 	}
 	if err := h.store.PutAnnotationPage(r.Context(), itemID, canvasID, body); err != nil {
-		h.logger.Error("write annotation page", "item_id", itemID, "canvas_id", canvasID, "err", err)
+		h.logger.Error("write annotation page", "item_id", redact.Identifier(itemID), "item_id_hash", redact.Hash(itemID), "canvas_id", redact.Identifier(canvasID), "canvas_id_hash", redact.Hash(canvasID), "err", err)
 		h.writeError(w, r, http.StatusInternalServerError, "failed to store annotation page")
 		return
 	}
@@ -209,6 +210,10 @@ func bearerToken(r *http.Request) string {
 		return ""
 	}
 	return strings.TrimSpace(auth[len("Bearer "):])
+}
+
+func validRequestID(id string) bool {
+	return id != "" && len(id) <= 255 && !strings.ContainsAny(id, "\x00\n\r")
 }
 
 func (h *Handler) writeError(w http.ResponseWriter, r *http.Request, status int, msg string) {

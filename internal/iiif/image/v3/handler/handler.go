@@ -160,14 +160,8 @@ func (h *Handler) serveImage(w http.ResponseWriter, r *http.Request, req parse.R
 	w.Header().Add("Link", "<"+h.canonicalImageURL(req)+`>;rel="canonical"`)
 	w.Header().Add("Link", profileLinkHeader)
 
-	release, err := h.acquireVips(r.Context())
-	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, "server busy")
-		return
-	}
 	meta, err := h.sourceMeta(r.Context(), req.Identifier)
 	if err != nil {
-		release()
 		if errors.Is(err, storage.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "identifier not found")
 			return
@@ -182,13 +176,11 @@ func (h *Handler) serveImage(w http.ResponseWriter, r *http.Request, req parse.R
 		etag = derivativeETag(key)
 		w.Header().Set("ETag", etag)
 		if ifNoneMatchMatches(r.Header.Values("If-None-Match"), etag) {
-			release()
 			w.WriteHeader(http.StatusNotModified)
 			return
 		}
 
 		if rc, entry, err := h.derivativeCache.Get(r.Context(), key); err == nil {
-			release()
 			defer rc.Close()
 			if entry.ContentType != "" {
 				w.Header().Set("Content-Type", entry.ContentType)
@@ -205,7 +197,7 @@ func (h *Handler) serveImage(w http.ResponseWriter, r *http.Request, req parse.R
 			}
 			return
 		} else if !errors.Is(err, cache.ErrMiss) {
-			h.logger.Warn("derivative cache get", "key", key, "err", err)
+			h.logger.Warn("derivative cache get", "cache_key_hash", redact.Hash(key), slog.Any("err", err))
 		}
 	}
 
@@ -213,10 +205,14 @@ func (h *Handler) serveImage(w http.ResponseWriter, r *http.Request, req parse.R
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("X-Cache", "miss")
 	if r.Method == http.MethodHead {
-		release()
 		return
 	}
 
+	release, err := h.acquireVips(r.Context())
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "server busy")
+		return
+	}
 	tmp, err := os.CreateTemp("", "triplet-derivative-*")
 	if err != nil {
 		release()
@@ -241,7 +237,7 @@ func (h *Handler) serveImage(w http.ResponseWriter, r *http.Request, req parse.R
 			return
 		}
 		h.logger.Error("pipeline transform", "identifier", redact.Identifier(req.Identifier), "identifier_hash", redact.Hash(req.Identifier), "err", err)
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, http.StatusInternalServerError, "failed to transform image")
 		return
 	}
 	if result.ContentType != "" {
@@ -262,7 +258,7 @@ func (h *Handler) serveImage(w http.ResponseWriter, r *http.Request, req parse.R
 	}
 	if cacheable {
 		if err := h.derivativeCache.Put(r.Context(), key, contentType, tmp); err != nil {
-			h.logger.Warn("derivative cache put", "key", key, "err", err)
+			h.logger.Warn("derivative cache put", "cache_key_hash", redact.Hash(key), slog.Any("err", err))
 		}
 		if _, err := tmp.Seek(0, io.SeekStart); err != nil {
 			h.logger.Error("rewind cached derivative temp file", "identifier", redact.Identifier(req.Identifier), "identifier_hash", redact.Hash(req.Identifier), "err", err)
@@ -352,6 +348,16 @@ func (h *Handler) imageDimensions(ctx context.Context, identifier string) (int, 
 }
 
 func (h *Handler) sourceMeta(ctx context.Context, identifier string) (storage.Meta, error) {
+	if metaReader, ok := h.src.(storage.MetaReader); ok {
+		meta, err := metaReader.Meta(ctx, identifier)
+		if err != nil {
+			return storage.Meta{}, err
+		}
+		if h.maxSourceBytes > 0 && meta.Size > h.maxSourceBytes {
+			return storage.Meta{}, fmt.Errorf("source exceeds max_source_bytes %d", h.maxSourceBytes)
+		}
+		return meta, nil
+	}
 	rc, meta, err := h.src.Open(ctx, identifier)
 	if err != nil {
 		return storage.Meta{}, err

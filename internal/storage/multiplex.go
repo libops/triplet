@@ -27,16 +27,38 @@ type Route struct {
 
 // Open dispatches identifier to the first matching route.
 func (m *Multiplex) Open(ctx context.Context, identifier string) (io.ReadSeekCloser, Meta, error) {
+	opener, err := m.route(identifier)
+	if err != nil {
+		return nil, Meta{}, err
+	}
+	return opener.Open(ctx, identifier)
+}
+
+// Meta implements MetaReader when the selected opener supports metadata
+// lookups.
+func (m *Multiplex) Meta(ctx context.Context, identifier string) (Meta, error) {
+	opener, err := m.route(identifier)
+	if err != nil {
+		return Meta{}, err
+	}
+	metaReader, ok := opener.(MetaReader)
+	if !ok {
+		return Meta{}, fmt.Errorf("metadata unavailable for identifier")
+	}
+	return metaReader.Meta(ctx, identifier)
+}
+
+func (m *Multiplex) route(identifier string) (Opener, error) {
 	for _, r := range m.Routes {
 		if r.HasPrefix != "" && strings.HasPrefix(identifier, r.HasPrefix) {
-			return r.Opener.Open(ctx, identifier)
+			return r.Opener, nil
 		}
 		if r.HasScheme != "" && strings.HasPrefix(identifier, r.HasScheme+"://") {
-			return r.Opener.Open(ctx, identifier)
+			return r.Opener, nil
 		}
 	}
 	if m.Default == nil {
-		return nil, Meta{}, fmt.Errorf("%w: no route for identifier", ErrNotFound)
+		return nil, fmt.Errorf("%w: no route for identifier", ErrNotFound)
 	}
-	return m.Default.Open(ctx, identifier)
+	return m.Default, nil
 }

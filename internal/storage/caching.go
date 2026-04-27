@@ -77,6 +77,22 @@ func (c *Caching) Open(ctx context.Context, identifier string) (io.ReadSeekClose
 	return rc, meta, nil
 }
 
+// Meta implements MetaReader.
+func (c *Caching) Meta(ctx context.Context, identifier string) (Meta, error) {
+	if rc, entry, err := c.Store.Get(ctx, identifier); err == nil {
+		_ = rc.Close()
+		if c.StaleAfter > 0 && time.Since(entry.StoredAt) > c.StaleAfter {
+			c.startRefresh(identifier)
+		}
+		return cacheMeta(entry), nil
+	}
+	metaReader, ok := c.Inner.(MetaReader)
+	if !ok {
+		return Meta{}, errors.New("metadata unavailable")
+	}
+	return metaReader.Meta(ctx, identifier)
+}
+
 func cacheMeta(entry cache.Entry) Meta {
 	return Meta{
 		ContentType: entry.ContentType,

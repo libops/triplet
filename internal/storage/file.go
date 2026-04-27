@@ -42,24 +42,9 @@ func NewFileOpener(root string) (*FileOpener, error) {
 // as a slash-separated relative path; absolute paths and `..` components are
 // rejected.
 func (f *FileOpener) Open(_ context.Context, identifier string) (io.ReadSeekCloser, Meta, error) {
-	clean, err := safeJoin(f.Root, identifier)
+	realPath, meta, err := f.meta(identifier)
 	if err != nil {
 		return nil, Meta{}, err
-	}
-	realRoot, err := filepath.EvalSymlinks(f.Root)
-	if err != nil {
-		return nil, Meta{}, fmt.Errorf("file source root %q: %w", f.Root, err)
-	}
-	realPath, err := filepath.EvalSymlinks(clean)
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return nil, Meta{}, fmt.Errorf("%w: %s", ErrNotFound, identifier)
-		}
-		return nil, Meta{}, fmt.Errorf("resolve %q: %w", identifier, err)
-	}
-	rel, err := filepath.Rel(realRoot, realPath)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return nil, Meta{}, fmt.Errorf("%w: identifier escapes source root", ErrNotFound)
 	}
 	file, err := os.Open(realPath)
 	if err != nil {
@@ -68,13 +53,41 @@ func (f *FileOpener) Open(_ context.Context, identifier string) (io.ReadSeekClos
 		}
 		return nil, Meta{}, fmt.Errorf("open %q: %w", identifier, err)
 	}
-	info, err := file.Stat()
+	return file, meta, nil
+}
+
+// Meta implements MetaReader.
+func (f *FileOpener) Meta(_ context.Context, identifier string) (Meta, error) {
+	_, meta, err := f.meta(identifier)
+	return meta, err
+}
+
+func (f *FileOpener) meta(identifier string) (string, Meta, error) {
+	clean, err := safeJoin(f.Root, identifier)
 	if err != nil {
-		_ = file.Close()
-		return nil, Meta{}, fmt.Errorf("stat %q: %w", identifier, err)
+		return "", Meta{}, err
+	}
+	realRoot, err := filepath.EvalSymlinks(f.Root)
+	if err != nil {
+		return "", Meta{}, fmt.Errorf("file source root %q: %w", f.Root, err)
+	}
+	realPath, err := filepath.EvalSymlinks(clean)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return "", Meta{}, fmt.Errorf("%w: %s", ErrNotFound, identifier)
+		}
+		return "", Meta{}, fmt.Errorf("resolve %q: %w", identifier, err)
+	}
+	rel, err := filepath.Rel(realRoot, realPath)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", Meta{}, fmt.Errorf("%w: identifier escapes source root", ErrNotFound)
+	}
+	info, err := os.Stat(realPath)
+	if err != nil {
+		return "", Meta{}, fmt.Errorf("stat %q: %w", identifier, err)
 	}
 	ct := mime.TypeByExtension(strings.ToLower(filepath.Ext(clean)))
-	return file, Meta{
+	return realPath, Meta{
 		ContentType: ct,
 		Size:        info.Size(),
 		ModTime:     info.ModTime(),

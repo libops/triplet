@@ -56,15 +56,9 @@ func NewHTTPOpener(allowedHosts []string, requestTimeout time.Duration, maxBytes
 // Wrapping HTTPOpener in a [Caching] decorator is strongly recommended: this
 // implementation does not cache fetches itself.
 func (h *HTTPOpener) Open(ctx context.Context, identifier string) (io.ReadSeekCloser, Meta, error) {
-	if identifier == "" {
-		return nil, Meta{}, fmt.Errorf("%w: empty identifier", ErrNotFound)
-	}
-	target, err := url.Parse(identifier)
-	if err != nil || (target.Scheme != "http" && target.Scheme != "https") {
-		return nil, Meta{}, fmt.Errorf("%w: identifier must be an http(s) URL", ErrNotFound)
-	}
-	if !h.hostAllowed(target.Hostname()) {
-		return nil, Meta{}, fmt.Errorf("%w: host %q not in allow-list", ErrNotFound, target.Hostname())
+	target, err := h.parseTarget(identifier)
+	if err != nil {
+		return nil, Meta{}, err
 	}
 	if rc, meta, ok, err := h.openRange(ctx, target); ok || err != nil {
 		return rc, meta, err
@@ -118,15 +112,67 @@ func (h *HTTPOpener) Open(ctx context.Context, identifier string) (io.ReadSeekCl
 		return nil, Meta{}, fmt.Errorf("http source rewind: %w", err)
 	}
 
-	meta := Meta{
-		ContentType: resp.Header.Get("Content-Type"),
-		Size:        n,
-		Version:     httpVersion(resp.Header.Get("ETag"), resp.Header.Get("Last-Modified"), n),
-	}
-	if t, err := http.ParseTime(resp.Header.Get("Last-Modified")); err == nil {
-		meta.ModTime = t
-	}
+	meta := httpMeta(resp.Header, n)
 	return &tempFileReadSeekCloser{File: tmp, path: tmpName}, meta, nil
+}
+
+// Meta implements MetaReader.
+func (h *HTTPOpener) Meta(ctx context.Context, identifier string) (Meta, error) {
+	target, err := h.parseTarget(identifier)
+	if err != nil {
+		return Meta{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, target.String(), nil)
+	if err != nil {
+		return Meta{}, fmt.Errorf("http source: %w", err)
+	}
+	req.Header.Set("User-Agent", h.UserAgent)
+	req.Header.Set("Accept", "image/*")
+
+	resp, err := h.client().Do(req)
+	if err != nil {
+		return Meta{}, fmt.Errorf("http source head %q: %w", target.Redacted(), err)
+	}
+	defer resp.Body.Close()
+	switch resp.StatusCode {
+	case http.StatusOK:
+		size := int64(0)
+		if resp.ContentLength > 0 {
+			size = resp.ContentLength
+		}
+		if h.MaxBytes > 0 && size > h.MaxBytes {
+			return Meta{}, fmt.Errorf("http source %q: response exceeds max_bytes %d", target.Redacted(), h.MaxBytes)
+		}
+		return httpMeta(resp.Header, size), nil
+	case http.StatusMethodNotAllowed, http.StatusNotImplemented:
+		rc, meta, ok, err := h.openRange(ctx, target)
+		if err != nil {
+			return Meta{}, err
+		}
+		if ok {
+			_ = rc.Close()
+			return meta, nil
+		}
+		return Meta{}, fmt.Errorf("http source %q: metadata unavailable", target.Redacted())
+	case http.StatusNotFound:
+		return Meta{}, fmt.Errorf("%w: upstream 404", ErrNotFound)
+	default:
+		return Meta{}, fmt.Errorf("http source %q: upstream status %d", target.Redacted(), resp.StatusCode)
+	}
+}
+
+func (h *HTTPOpener) parseTarget(identifier string) (*url.URL, error) {
+	if identifier == "" {
+		return nil, fmt.Errorf("%w: empty identifier", ErrNotFound)
+	}
+	target, err := url.Parse(identifier)
+	if err != nil || (target.Scheme != "http" && target.Scheme != "https") {
+		return nil, fmt.Errorf("%w: identifier must be an http(s) URL", ErrNotFound)
+	}
+	if !h.hostAllowed(target.Hostname()) {
+		return nil, fmt.Errorf("%w: host %q not in allow-list", ErrNotFound, target.Hostname())
+	}
+	return target, nil
 }
 
 func (h *HTTPOpener) openRange(ctx context.Context, target *url.URL) (io.ReadSeekCloser, Meta, bool, error) {
@@ -210,6 +256,18 @@ func httpVersion(etag, lastModified string, size int64) string {
 		return "http:last-modified:" + lastModified + ":" + strconv.FormatInt(size, 10)
 	}
 	return ""
+}
+
+func httpMeta(header http.Header, size int64) Meta {
+	meta := Meta{
+		ContentType: header.Get("Content-Type"),
+		Size:        size,
+		Version:     httpVersion(header.Get("ETag"), header.Get("Last-Modified"), size),
+	}
+	if t, err := http.ParseTime(header.Get("Last-Modified")); err == nil {
+		meta.ModTime = t
+	}
+	return meta
 }
 
 func parseContentRangeSize(v string) (int64, bool) {

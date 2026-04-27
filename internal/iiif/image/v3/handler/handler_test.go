@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"image"
 	"image/color"
 	"image/png"
@@ -13,6 +14,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -183,6 +185,101 @@ func TestImageRequestHasCanonicalLink(t *testing.T) {
 	}
 	if got := resp.Header.Get("X-Cache"); got != "miss" {
 		t.Fatalf("X-Cache = %q", got)
+	}
+}
+
+func TestPipelineErrorUsesGenericResponse(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "bad.png"), []byte("not an image"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	op, err := storage.NewFileOpener(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	h := New(
+		"/iiif/3",
+		"http://example.test",
+		op,
+		pipeline.New(op, pipeline.Limits{MaxOutputPixels: 10_000_000}),
+		cache.Noop{},
+		nil,
+		types.Limits{MaxArea: 10_000_000},
+		true,
+		250_000_000,
+		1<<30,
+		2,
+		logger,
+	)
+	mux := http.NewServeMux()
+	h.Register(mux)
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/iiif/3/bad.png/full/max/0/default.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "vips") || !strings.Contains(string(b), "failed to transform image") {
+		t.Fatalf("body = %q", string(b))
+	}
+}
+
+func TestDerivativeCacheFailureWarns(t *testing.T) {
+	var logs bytes.Buffer
+	root := t.TempDir()
+	img := image.NewRGBA(image.Rect(0, 0, 10, 10))
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "sample.png"), buf.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	op, err := storage.NewFileOpener(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	h := New(
+		"/iiif/3",
+		"http://example.test",
+		op,
+		pipeline.New(op, pipeline.Limits{MaxOutputPixels: 10_000_000}),
+		failingCache{},
+		nil,
+		types.Limits{MaxArea: 10_000_000},
+		true,
+		250_000_000,
+		1<<30,
+		2,
+		logger,
+	)
+	mux := http.NewServeMux()
+	h.Register(mux)
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/iiif/3/sample.png/full/max/0/default.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	got := logs.String()
+	if !strings.Contains(got, "derivative cache get") || !strings.Contains(got, "derivative cache put") {
+		t.Fatalf("logs = %q", got)
 	}
 }
 
@@ -425,3 +522,19 @@ func (m *memoryStore) Delete(_ context.Context, key string) error {
 	delete(m.meta, key)
 	return nil
 }
+
+type failingCache struct{}
+
+func (failingCache) Get(context.Context, string) (io.ReadCloser, cache.Entry, error) {
+	return nil, cache.Entry{}, errCacheFailure
+}
+
+func (failingCache) Put(context.Context, string, string, io.Reader) error {
+	return errCacheFailure
+}
+
+func (failingCache) Delete(context.Context, string) error {
+	return nil
+}
+
+var errCacheFailure = errors.New("cache failed")

@@ -11,6 +11,7 @@ import (
 	"github.com/libops/triplet/internal/cors"
 	"github.com/libops/triplet/internal/iiif/auth/v2/authorizer"
 	"github.com/libops/triplet/internal/iiif/auth/v2/types"
+	"github.com/libops/triplet/internal/redact"
 )
 
 type Handler struct {
@@ -50,7 +51,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	itemID, err := url.PathUnescape(parts[0])
-	if err != nil || itemID == "" {
+	if err != nil || !validRequestID(itemID) {
 		h.writeError(w, r, http.StatusBadRequest, "invalid item id")
 		return
 	}
@@ -75,7 +76,7 @@ func (h *Handler) probe(w http.ResponseWriter, r *http.Request, itemID string) {
 	}
 	status, err := h.authz.Probe(r.Context(), authorizer.Request{ItemID: itemID, Token: bearerToken(r)})
 	if err != nil {
-		h.logger.Error("auth probe", "item_id", itemID, "err", err)
+		h.logger.Error("auth probe", "item_id", redact.Identifier(itemID), "item_id_hash", redact.Hash(itemID), "err", err)
 		h.writeError(w, r, http.StatusInternalServerError, "probe failed")
 		return
 	}
@@ -112,7 +113,7 @@ func (h *Handler) token(w http.ResponseWriter, r *http.Request, itemID string) {
 	}
 	token, expiresIn, err := h.authz.Token(r.Context(), itemID, r)
 	if err != nil {
-		h.logger.Error("auth token", "item_id", itemID, "err", err)
+		h.logger.Error("auth token", "item_id", redact.Identifier(itemID), "item_id_hash", redact.Hash(itemID), "err", err)
 		h.writeError(w, r, http.StatusInternalServerError, "token failed")
 		return
 	}
@@ -134,7 +135,7 @@ func (h *Handler) logout(w http.ResponseWriter, r *http.Request, itemID string) 
 		return
 	}
 	if err := h.authz.Logout(r.Context(), itemID, r); err != nil {
-		h.logger.Error("auth logout", "item_id", itemID, "err", err)
+		h.logger.Error("auth logout", "item_id", redact.Identifier(itemID), "item_id_hash", redact.Hash(itemID), "err", err)
 		h.writeError(w, r, http.StatusInternalServerError, "logout failed")
 		return
 	}
@@ -148,6 +149,10 @@ func bearerToken(r *http.Request) string {
 		return ""
 	}
 	return strings.TrimSpace(auth[len("Bearer "):])
+}
+
+func validRequestID(id string) bool {
+	return id != "" && len(id) <= 255 && !strings.ContainsAny(id, "\x00\n\r")
 }
 
 func (h *Handler) writeJSONHeaders(w http.ResponseWriter, r *http.Request) {

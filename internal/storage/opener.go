@@ -35,3 +35,9 @@ type Meta struct {
 type Opener interface {
 	Open(ctx context.Context, identifier string) (io.ReadSeekCloser, Meta, error)
 }
+
+// MetaReader reports source metadata without requiring callers to open and
+// spool the whole source body.
+type MetaReader interface {
+	Meta(ctx context.Context, identifier string) (Meta, error)
+}

@@ -166,6 +166,35 @@ func TestHTTPOpenerUsesRangeRequests(t *testing.T) {
 	}
 }
 
+func TestHTTPOpenerMetaUsesHEAD(t *testing.T) {
+	body := []byte("0123456789")
+	var gotMethods []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethods = append(gotMethods, r.Method)
+		if r.Method != http.MethodHead {
+			t.Fatalf("unexpected method %s", r.Method)
+		}
+		w.Header().Set("Content-Type", "image/png")
+		w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+	}))
+	defer srv.Close()
+
+	op := NewHTTPOpener([]string{"127.0.0.1", "localhost"}, 5*time.Second, 0)
+	meta, err := op.Meta(context.Background(), srv.URL+"/image")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.Size != int64(len(body)) {
+		t.Fatalf("size = %d", meta.Size)
+	}
+	if meta.ContentType != "image/png" {
+		t.Fatalf("content-type = %q", meta.ContentType)
+	}
+	if len(gotMethods) != 1 || gotMethods[0] != http.MethodHead {
+		t.Fatalf("methods = %#v", gotMethods)
+	}
+}
+
 func parseTestRange(t *testing.T, v string) (int64, int64) {
 	t.Helper()
 	v = strings.TrimPrefix(v, "bytes=")
