@@ -125,9 +125,10 @@ type FileSource struct {
 
 // HTTPSource resolves identifiers that are HTTP(S) URLs.
 type HTTPSource struct {
-	AllowedHosts   []string      `yaml:"allowed_hosts"`
-	RequestTimeout time.Duration `yaml:"request_timeout"`
-	MaxBytes       int64         `yaml:"max_bytes"`
+	AllowedHosts      []string      `yaml:"allowed_hosts"`
+	AllowPrivateHosts bool          `yaml:"allow_private_hosts"`
+	RequestTimeout    time.Duration `yaml:"request_timeout"`
+	MaxBytes          int64         `yaml:"max_bytes"`
 }
 
 // GCSSource resolves identifiers as object keys in a GCS bucket.
@@ -412,23 +413,25 @@ func (c *Config) validate() error {
 	if c.Sources.GCS != nil && c.Sources.GCS.BucketURL == "" {
 		return errors.New("sources.gcs.bucket_url is required when sources.gcs is configured")
 	}
-	switch c.Sources.Default {
-	case "":
-		return errors.New("sources.default is required")
-	case "file":
-		if c.Sources.File == nil || c.Sources.File.Root == "" {
-			return errors.New("sources.file.root is required when sources.default = file")
+	if c.IIIF.Image.Enabled {
+		switch c.Sources.Default {
+		case "":
+			return errors.New("sources.default is required when iiif.image.enabled = true")
+		case "file":
+			if c.Sources.File == nil || c.Sources.File.Root == "" {
+				return errors.New("sources.file.root is required when sources.default = file")
+			}
+		case "http":
+			if c.Sources.HTTP == nil {
+				return errors.New("sources.http is required when sources.default = http")
+			}
+		case "gcs":
+			if c.Sources.GCS == nil || c.Sources.GCS.BucketURL == "" {
+				return errors.New("sources.gcs.bucket_url is required when sources.default = gcs")
+			}
+		default:
+			return fmt.Errorf("sources.default: %q not supported in this build", c.Sources.Default)
 		}
-	case "http":
-		if c.Sources.HTTP == nil {
-			return errors.New("sources.http is required when sources.default = http")
-		}
-	case "gcs":
-		if c.Sources.GCS == nil || c.Sources.GCS.BucketURL == "" {
-			return errors.New("sources.gcs.bucket_url is required when sources.default = gcs")
-		}
-	default:
-		return fmt.Errorf("sources.default: %q not supported in this build", c.Sources.Default)
 	}
 	if c.Cache.Root != "" && c.Cache.BucketURL != "" {
 		return errors.New("cache.root and cache.bucket_url are mutually exclusive")

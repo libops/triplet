@@ -45,8 +45,7 @@ type Limits struct {
 	// encoded source limit.
 	MaxSourceBytes int64
 	// MaxDerivativeBytes rejects encoded derivatives larger than this many
-	// bytes after libvips export and before response/cache writes. 0 disables
-	// the encoded derivative limit.
+	// bytes after libvips export. 0 disables the encoded derivative limit.
 	MaxDerivativeBytes int64
 }
 
@@ -94,8 +93,9 @@ type Result struct {
 // region/size/rotation/quality/format transforms, encodes the result, and
 // writes it to w.
 //
-// govips encoders return derivative bytes as buffers; Transform writes the
-// completed derivative to w after encoding.
+// When w is an *os.File, Transform asks libvips to encode directly to that file
+// so large derivatives do not need a matching Go byte slice. Other writer types
+// use govips' buffer exporters as a compatibility fallback.
 func (p *Pipeline) Transform(ctx context.Context, req parse.Request, w io.Writer) (Result, error) {
 	if req.Kind != parse.KindImage {
 		return Result{}, fmt.Errorf("pipeline: expected image request, got kind %d", req.Kind)
@@ -184,15 +184,9 @@ func (p *Pipeline) Transform(ctx context.Context, req parse.Request, w io.Writer
 		img = replacement
 	}
 
-	contentType, out, err := encode(img, req.Format, p.options.ColorManagement)
+	contentType, err := p.encode(img, req.Format, w)
 	if err != nil {
 		return Result{}, err
-	}
-	if p.limits.MaxDerivativeBytes > 0 && int64(len(out)) > p.limits.MaxDerivativeBytes {
-		return Result{}, fmt.Errorf("%w: derivative %d bytes exceeds max_derivative_bytes %d", ErrBadRequest, len(out), p.limits.MaxDerivativeBytes)
-	}
-	if _, err := w.Write(out); err != nil {
-		return Result{}, tvips.Wrap("write", err)
 	}
 
 	return Result{
@@ -392,7 +386,35 @@ func loadBitonalLUT() (*gv.ImageRef, error) {
 	return lut, nil
 }
 
-func encode(img *gv.ImageRef, format parse.Format, colorManagement string) (string, []byte, error) {
+func (p *Pipeline) encode(img *gv.ImageRef, format parse.Format, w io.Writer) (string, error) {
+	if f, ok := w.(*os.File); ok {
+		contentType, n, err := encodeToFile(img, format, p.options.ColorManagement, f.Name())
+		if err != nil {
+			return "", err
+		}
+		if p.limits.MaxDerivativeBytes > 0 && n > p.limits.MaxDerivativeBytes {
+			return "", fmt.Errorf("%w: derivative %d bytes exceeds max_derivative_bytes %d", ErrBadRequest, n, p.limits.MaxDerivativeBytes)
+		}
+		return contentType, nil
+	}
+	contentType, out, err := encodeToBuffer(img, format, p.options.ColorManagement)
+	if err != nil {
+		return "", err
+	}
+	if p.limits.MaxDerivativeBytes > 0 && int64(len(out)) > p.limits.MaxDerivativeBytes {
+		return "", fmt.Errorf("%w: derivative %d bytes exceeds max_derivative_bytes %d", ErrBadRequest, len(out), p.limits.MaxDerivativeBytes)
+	}
+	n, err := w.Write(out)
+	if err != nil {
+		return "", tvips.Wrap("write", err)
+	}
+	if n != len(out) {
+		return "", io.ErrShortWrite
+	}
+	return contentType, nil
+}
+
+func encodeToBuffer(img *gv.ImageRef, format parse.Format, colorManagement string) (string, []byte, error) {
 	stripMetadata := colorManagement != "preserve"
 	switch format {
 	case parse.FormatJPG:

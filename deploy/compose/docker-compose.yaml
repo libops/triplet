@@ -27,7 +27,7 @@ services:
     volumes:
       - ./config.yaml:/etc/triplet/config.yaml:ro
       - ./images:/var/lib/triplet/images:ro
-      - ./presentation:/var/lib/triplet/presentation:ro
+      - ./presentation:/var/lib/triplet/presentation
       - ./cache:/var/lib/triplet/cache
       - ./source-cache:/var/lib/triplet/source-cache
       # Optional private CA bundle for upstream HTTPS sources. Concatenate one

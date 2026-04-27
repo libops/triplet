@@ -44,14 +44,6 @@ func Build(cfg *config.Config, logger *slog.Logger) (*http.Server, error) {
 		}
 	}()
 
-	src, cleanupSource, err := buildSource(cfg)
-	if err != nil {
-		return nil, err
-	}
-	if cleanupSource != nil {
-		cleanups = append(cleanups, cleanupSource)
-	}
-
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -64,6 +56,13 @@ func Build(cfg *config.Config, logger *slog.Logger) (*http.Server, error) {
 	}
 
 	if cfg.IIIF.Image.Enabled {
+		src, cleanupSource, err := buildSource(cfg)
+		if err != nil {
+			return nil, err
+		}
+		if cleanupSource != nil {
+			cleanups = append(cleanups, cleanupSource)
+		}
 		pipe := pipeline.New(src, pipeline.Limits{
 			MaxOutputPixels:    cfg.IIIF.Image.MaxOutputPixels,
 			MaxSourcePixels:    cfg.IIIF.Image.MaxSourcePixels,
@@ -224,11 +223,13 @@ func buildSource(cfg *config.Config) (storage.Opener, func(), error) {
 
 	var httpOp storage.Opener
 	if cfg.Sources.HTTP != nil {
-		httpOp = storage.NewHTTPOpener(
+		op := storage.NewHTTPOpener(
 			cfg.Sources.HTTP.AllowedHosts,
 			cfg.Sources.HTTP.RequestTimeout,
 			cfg.Sources.HTTP.MaxBytes,
 		)
+		op.AllowPrivateHosts = cfg.Sources.HTTP.AllowPrivateHosts
+		httpOp = op
 		if cfg.Cache.SourceRoot != "" || cfg.Cache.SourceBucketURL != "" {
 			sourceCache, err := buildSourceCache(ctx, cfg)
 			if err != nil {

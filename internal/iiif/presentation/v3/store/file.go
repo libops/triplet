@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
 // FileStore reads manifest documents from a filesystem root.
@@ -15,6 +16,7 @@ import (
 type FileStore struct {
 	root     string
 	realRoot string
+	mu       sync.Mutex
 }
 
 // NewFileStore constructs a FileStore rooted at root.
@@ -70,11 +72,13 @@ func (s *FileStore) GetAnnotationPage(_ context.Context, itemID, canvasID string
 }
 
 // PutAnnotationPage implements Store.
-func (s *FileStore) PutAnnotationPage(_ context.Context, itemID, canvasID string, body []byte) error {
+func (s *FileStore) PutAnnotationPage(_ context.Context, itemID, canvasID string, body []byte, ifMatch string) error {
 	path, err := s.resolve(itemID, "canvas", canvasID, "annotations.json")
 	if err != nil {
 		return err
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	dir := filepath.Dir(path)
 	if err := s.ensureCreatePathContained(dir); err != nil {
 		return err
@@ -85,7 +89,70 @@ func (s *FileStore) PutAnnotationPage(_ context.Context, itemID, canvasID string
 	if err := s.ensureContained(dir); err != nil {
 		return err
 	}
-	return os.WriteFile(path, body, 0o600)
+	if err := s.checkAnnotationPagePrecondition(path, ifMatch); err != nil {
+		return err
+	}
+	return atomicWriteFile(path, body, 0o600)
+}
+
+func (s *FileStore) checkAnnotationPagePrecondition(path, ifMatch string) error {
+	current, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			if ifMatch == "*" {
+				return nil
+			}
+			return ErrPreconditionFailed
+		}
+		return err
+	}
+	if ifMatch == "*" {
+		return ErrPreconditionFailed
+	}
+	if !IfMatchMatches(ifMatch, DocumentETag(current)) {
+		return ErrPreconditionFailed
+	}
+	return nil
+}
+
+func atomicWriteFile(path string, body []byte, perm fs.FileMode) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".annotations-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.Remove(tmpName)
+		}
+	}()
+	if _, err := tmp.Write(body); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(perm); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		return err
+	}
+	cleanup = false
+	dirHandle, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer dirHandle.Close()
+	return dirHandle.Sync()
 }
 
 func (s *FileStore) resolve(itemID string, elems ...string) (string, error) {

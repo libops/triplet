@@ -32,7 +32,8 @@ Current notable knobs:
 - `iiif.image.max_output_pixels`, `iiif.image.max_source_pixels`,
   `iiif.image.max_derivative_bytes`, and `iiif.image.max_concurrent_transforms`
   bound libvips request work.
-- `iiif.search.*` enables the Content Search 2.0 route with the default no-op backend.
+- `iiif.search.*` enables an experimental Content Search 2.0 route with the
+  default no-op backend. It is not a production search index.
 - `iiif.auth.*` enables the Authorization Flow 2.0 route. The built-in
   permit-all authorizer requires `iiif.auth.development_permit_all: true` and
   is intended only for development.
@@ -41,7 +42,9 @@ Current notable knobs:
 - `sources.http.allowed_hosts` is the primary security boundary for remote
   source images. Keep it to the exact upstream hostnames Triplet is allowed to
   fetch; an empty list denies all HTTP sources and `*` should only be used in
-  closed internal deployments.
+  closed internal deployments. Private, loopback, link-local, and metadata
+  addresses are blocked unless `sources.http.allow_private_hosts` is explicitly
+  enabled.
 - `cache.root` / `cache.bucket_url` configure derivative caching.
 - `cache.source_root` / `cache.source_bucket_url` configure HTTP source caching.
 

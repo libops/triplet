@@ -56,7 +56,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		methods := "GET, HEAD, OPTIONS"
 		if h.writeEnabled {
 			methods = "GET, HEAD, PUT, OPTIONS"
-			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, If-Match")
 		} else {
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 		}
@@ -103,6 +103,7 @@ func (h *Handler) serveManifest(w http.ResponseWriter, r *http.Request, rawItemI
 		return
 	}
 	h.writeDocumentHeaders(w, r)
+	w.Header().Set("ETag", store.DocumentETag(body))
 	w.WriteHeader(http.StatusOK)
 	if r.Method == http.MethodHead {
 		return
@@ -159,6 +160,7 @@ func (h *Handler) getAnnotationPage(w http.ResponseWriter, r *http.Request, item
 		return
 	}
 	h.writeDocumentHeaders(w, r)
+	w.Header().Set("ETag", store.DocumentETag(body))
 	w.WriteHeader(http.StatusOK)
 	if r.Method == http.MethodHead {
 		return
@@ -178,12 +180,22 @@ func (h *Handler) putAnnotationPage(w http.ResponseWriter, r *http.Request, item
 		h.writeError(w, r, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := h.store.PutAnnotationPage(r.Context(), itemID, canvasID, body); err != nil {
+	match := strings.TrimSpace(r.Header.Get("If-Match"))
+	if match == "" {
+		h.writeError(w, r, http.StatusPreconditionRequired, "If-Match is required")
+		return
+	}
+	if err := h.store.PutAnnotationPage(r.Context(), itemID, canvasID, body, match); err != nil {
+		if errors.Is(err, store.ErrPreconditionFailed) {
+			h.writeError(w, r, http.StatusPreconditionFailed, "annotation page precondition failed")
+			return
+		}
 		h.logger.Error("write annotation page", "item_id", redact.Identifier(itemID), "item_id_hash", redact.Hash(itemID), "canvas_id", redact.Identifier(canvasID), "canvas_id_hash", redact.Hash(canvasID), "err", err)
 		h.writeError(w, r, http.StatusInternalServerError, "failed to store annotation page")
 		return
 	}
 	h.writeCORS(w, r)
+	w.Header().Set("ETag", store.DocumentETag(body))
 	w.WriteHeader(http.StatusNoContent)
 }
 

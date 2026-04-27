@@ -57,9 +57,36 @@ func (s *MariaDBStore) GetAnnotationPage(ctx context.Context, itemID, canvasID s
 	return getJSON(ctx, s.db, selectAnnotationPageSQL, itemID, canvasID)
 }
 
-func (s *MariaDBStore) PutAnnotationPage(ctx context.Context, itemID, canvasID string, body []byte) error {
-	_, err := s.db.ExecContext(ctx, upsertAnnotationPageSQL, itemID, canvasID, body)
-	return err
+func (s *MariaDBStore) PutAnnotationPage(ctx context.Context, itemID, canvasID string, body []byte, ifMatch string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
+	var current []byte
+	err = tx.QueryRowContext(ctx, selectAnnotationPageForUpdateSQL, itemID, canvasID).Scan(&current)
+	if errors.Is(err, sql.ErrNoRows) {
+		if ifMatch != "*" {
+			return ErrPreconditionFailed
+		}
+		if _, err := tx.ExecContext(ctx, insertAnnotationPageSQL, itemID, canvasID, body); err != nil {
+			return err
+		}
+		return tx.Commit()
+	}
+	if err != nil {
+		return err
+	}
+	if ifMatch == "*" || !IfMatchMatches(ifMatch, DocumentETag(current)) {
+		return ErrPreconditionFailed
+	}
+	if _, err := tx.ExecContext(ctx, updateAnnotationPageSQL, body, itemID, canvasID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func getJSON(ctx context.Context, db *sql.DB, query string, args ...any) ([]byte, error) {
@@ -86,8 +113,14 @@ var selectManifestSQL string
 //go:embed sql/queries/select_annotation_page.sql
 var selectAnnotationPageSQL string
 
-//go:embed sql/queries/upsert_annotation_page.sql
-var upsertAnnotationPageSQL string
+//go:embed sql/queries/insert_annotation_page.sql
+var insertAnnotationPageSQL string
+
+//go:embed sql/queries/update_annotation_page.sql
+var updateAnnotationPageSQL string
+
+//go:embed sql/queries/select_annotation_page_for_update.sql
+var selectAnnotationPageForUpdateSQL string
 
 var mariadbSchemaStatements = []string{
 	createManifestsTableSQL,

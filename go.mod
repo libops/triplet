@@ -6,7 +6,7 @@ require (
 	cloud.google.com/go/storage v1.62.1
 	github.com/davidbyttow/govips/v2 v2.18.0
 	github.com/go-sql-driver/mysql v1.9.3
-	github.com/libops/iiif-spec v0.0.1
+	github.com/libops/iiif-spec v0.1.0
 	github.com/prometheus/client_golang v1.23.2
 	google.golang.org/api v0.276.0
 	gopkg.in/yaml.v3 v3.0.1

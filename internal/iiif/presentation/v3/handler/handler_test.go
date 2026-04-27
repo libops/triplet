@@ -134,6 +134,7 @@ func TestAnnotationPagePut(t *testing.T) {
 	}
 	req.Header.Set("Content-Type", "application/ld+json")
 	req.Header.Set("Authorization", "Bearer test-token")
+	req.Header.Set("If-Match", "*")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -150,6 +151,76 @@ func TestAnnotationPagePut(t *testing.T) {
 	defer getResp.Body.Close()
 	if getResp.StatusCode != http.StatusOK {
 		t.Fatalf("get status = %d", getResp.StatusCode)
+	}
+	if getResp.Header.Get("ETag") == "" {
+		t.Fatal("GET response missing ETag")
+	}
+}
+
+func TestAnnotationPagePutRequiresIfMatch(t *testing.T) {
+	srv := setupTestServerWithWrites(t, true, "test-token")
+	defer srv.Close()
+	body := `{"@context":["http://iiif.io/api/extension/text-granularity/context.json","http://iiif.io/api/presentation/3/context.json"],"id":"http://example.test/presentation/v3/item-1/canvas/canvas-2/annotations","type":"AnnotationPage","items":[]}`
+	req, err := http.NewRequest(http.MethodPut, srv.URL+"/presentation/v3/item-1/canvas/canvas-2/annotations", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer test-token")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusPreconditionRequired {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusPreconditionRequired)
+	}
+}
+
+func TestAnnotationPagePutHonorsIfMatch(t *testing.T) {
+	srv := setupTestServerWithWrites(t, true, "test-token")
+	defer srv.Close()
+	url := srv.URL + "/presentation/v3/item-1/canvas/canvas-1/annotations"
+	getResp, err := http.Get(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	etag := getResp.Header.Get("ETag")
+	_ = getResp.Body.Close()
+	if etag == "" {
+		t.Fatal("GET response missing ETag")
+	}
+
+	body := `{"@context":["http://iiif.io/api/extension/text-granularity/context.json","http://iiif.io/api/presentation/3/context.json"],"id":"http://example.test/presentation/v3/item-1/canvas/canvas-1/annotations","type":"AnnotationPage","items":[{"id":"http://example.test/annotations/3","type":"Annotation","textGranularity":"line","motivation":["supplementing"],"body":{"type":"TextualBody","value":"updated"},"target":{"type":"SpecificResource","source":"http://example.test/presentation/v3/item-1/canvas/canvas-1","selector":{"type":"FragmentSelector","value":"xywh=5,6,7,8"}}}]}`
+	req, err := http.NewRequest(http.MethodPut, url, strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/ld+json")
+	req.Header.Set("Authorization", "Bearer test-token")
+	req.Header.Set("If-Match", etag)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("matched PUT status = %d", resp.StatusCode)
+	}
+
+	req, err = http.NewRequest(http.MethodPut, url, strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/ld+json")
+	req.Header.Set("Authorization", "Bearer test-token")
+	req.Header.Set("If-Match", etag)
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusPreconditionFailed {
+		t.Fatalf("stale PUT status = %d, want %d", resp.StatusCode, http.StatusPreconditionFailed)
 	}
 }
 

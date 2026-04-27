@@ -67,7 +67,7 @@ iiif:
     # when the source is not already available as a file path. 0 disables.
     max_source_bytes: 1073741824
     # Refuse encoded derivatives larger than this many bytes after libvips
-    # export and before response/cache writes. 0 disables.
+    # export. 0 disables.
     max_derivative_bytes: 536870912
     # Bound concurrent libvips jobs across image derivatives and info probes.
     max_concurrent_transforms: 4
@@ -125,9 +125,12 @@ sources:
   # exact trusted upstream hostnames that may supply source images. Redirects
   # are checked against the same list. An empty list denies all HTTP sources;
   # `*` allows any host and is only appropriate for closed internal networks.
-  # Source caching does not bypass these checks.
+  # Private, loopback, link-local, and metadata addresses are blocked unless
+  # allow_private_hosts is explicitly enabled. Source caching does not bypass
+  # these checks.
   # http:
   #   allowed_hosts: [example.org, iiif.example.edu]
+  #   allow_private_hosts: false
   #   request_timeout: 30s
   #   max_bytes: 52428800
   # gcs:

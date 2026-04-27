@@ -59,8 +59,9 @@ type cachedDimensions struct {
 }
 
 const (
-	profileLinkHeader = `<http://iiif.io/api/image/3/level2.json>;rel="profile"`
-	exposeHeaders     = "Content-Length, Content-Type, ETag, Link, X-Cache"
+	profileLinkHeader   = `<http://iiif.io/api/image/3/level2.json>;rel="profile"`
+	exposeHeaders       = "Content-Length, Content-Type, ETag, Link, X-Cache"
+	maxInfoCacheEntries = 4096
 )
 
 // New constructs an Image API handler.
@@ -336,6 +337,12 @@ func (h *Handler) imageDimensions(ctx context.Context, identifier string) (int, 
 	}
 	if h.infoCacheEnabled && cacheableMeta {
 		h.infoCacheMu.Lock()
+		if len(h.infoCache) >= maxInfoCacheEntries {
+			for key := range h.infoCache {
+				delete(h.infoCache, key)
+				break
+			}
+		}
 		h.infoCache[identifier] = cachedDimensions{
 			width:   width,
 			height:  height,

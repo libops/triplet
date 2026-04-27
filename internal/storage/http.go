@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -28,6 +29,9 @@ type HTTPOpener struct {
 	AllowedHosts []string
 	UserAgent    string
 	MaxBytes     int64
+	// AllowPrivateHosts permits loopback, link-local, private, and other
+	// non-public upstream addresses. Keep false for public deployments.
+	AllowPrivateHosts bool
 }
 
 // NewHTTPOpener constructs an HTTPOpener with sane timeouts.
@@ -40,10 +44,7 @@ func NewHTTPOpener(allowedHosts []string, requestTimeout time.Duration, maxBytes
 		UserAgent:    "triplet/0.1 (+https://github.com/libops/triplet)",
 		MaxBytes:     maxBytes,
 	}
-	h.Client = &http.Client{
-		Timeout:       requestTimeout,
-		CheckRedirect: h.checkRedirect,
-	}
+	h.Client = &http.Client{Timeout: requestTimeout}
 	return h
 }
 
@@ -226,11 +227,51 @@ func (h *HTTPOpener) openRange(ctx context.Context, target *url.URL) (io.ReadSee
 
 func (h *HTTPOpener) client() *http.Client {
 	if h.Client == nil {
-		return &http.Client{Timeout: 30 * time.Second, CheckRedirect: h.checkRedirect}
+		return &http.Client{
+			Timeout:       30 * time.Second,
+			CheckRedirect: h.checkRedirect,
+			Transport:     h.transport(),
+		}
 	}
 	c := *h.Client
 	c.CheckRedirect = h.checkRedirect
+	if c.Transport == nil {
+		c.Transport = h.transport()
+	}
 	return &c
+}
+
+func (h *HTTPOpener) transport() http.RoundTripper {
+	base := http.DefaultTransport.(*http.Transport).Clone()
+	base.DialContext = (&net.Dialer{
+		Timeout:   30 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}).DialContext
+	if !h.AllowPrivateHosts {
+		base.DialContext = h.dialPublicContext
+	}
+	return base
+}
+
+func (h *HTTPOpener) dialPublicContext(ctx context.Context, network, address string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return nil, err
+	}
+	ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+	for _, addr := range ips {
+		if privateAddressBlocked(addr.IP) {
+			return nil, fmt.Errorf("%w: host %q resolves to non-public address %s", ErrNotFound, host, addr.IP)
+		}
+	}
+	dialer := &net.Dialer{
+		Timeout:   30 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}
+	return dialer.DialContext(ctx, network, net.JoinHostPort(host, port))
 }
 
 func (h *HTTPOpener) checkRedirect(req *http.Request, via []*http.Request) error {
@@ -296,6 +337,17 @@ func (h *HTTPOpener) hostAllowed(host string) bool {
 		}
 	}
 	return false
+}
+
+func privateAddressBlocked(ip net.IP) bool {
+	return ip == nil ||
+		ip.IsUnspecified() ||
+		ip.IsLoopback() ||
+		ip.IsPrivate() ||
+		ip.IsLinkLocalUnicast() ||
+		ip.IsLinkLocalMulticast() ||
+		ip.IsInterfaceLocalMulticast() ||
+		ip.IsMulticast()
 }
 
 // seekableBytes is a tiny io.ReadSeeker over a []byte without pulling in

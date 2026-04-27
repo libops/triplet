@@ -1,0 +1,31 @@
+{
+  "@context": [
+    "http://iiif.io/api/extension/text-granularity/context.json",
+    "http://iiif.io/api/presentation/3/context.json"
+  ],
+  "id": "http://localhost:8080/presentation/v3/item-1/canvas/canvas-1/annotations",
+  "type": "AnnotationPage",
+  "items": [
+    {
+      "id": "http://localhost:8080/presentation/v3/item-1/canvas/canvas-1/annotations/line-1",
+      "type": "Annotation",
+      "motivation": [
+        "supplementing"
+      ],
+      "textGranularity": "line",
+      "body": {
+        "type": "TextualBody",
+        "value": "Triplet presentation conformance text",
+        "format": "text/plain"
+      },
+      "target": {
+        "type": "SpecificResource",
+        "source": "http://localhost:8080/presentation/v3/item-1/canvas/canvas-1",
+        "selector": {
+          "type": "FragmentSelector",
+          "value": "xywh=10,20,30,12"
+        }
+      }
+    }
+  ]
+}

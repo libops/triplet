@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -29,6 +30,7 @@ func TestHTTPOpener(t *testing.T) {
 	defer srv.Close()
 
 	op := NewHTTPOpener([]string{"127.0.0.1", "localhost"}, 5*time.Second, 0)
+	op.AllowPrivateHosts = true
 
 	t.Run("found", func(t *testing.T) {
 		rc, meta, err := op.Open(context.Background(), srv.URL+"/ok")
@@ -90,6 +92,7 @@ func TestHTTPOpener(t *testing.T) {
 
 	t.Run("max bytes", func(t *testing.T) {
 		limited := NewHTTPOpener([]string{"127.0.0.1", "localhost"}, 5*time.Second, 4)
+		limited.AllowPrivateHosts = true
 		_, _, err := limited.Open(context.Background(), srv.URL+"/large")
 		if err == nil {
 			t.Fatal("expected error")
@@ -104,6 +107,7 @@ func TestHTTPOpenerRejectsRedirectToDeniedHost(t *testing.T) {
 	defer redirector.Close()
 
 	op := NewHTTPOpener([]string{"127.0.0.1"}, 5*time.Second, 0)
+	op.AllowPrivateHosts = true
 	_, _, err := op.Open(context.Background(), redirector.URL+"/redirect")
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("err = %v", err)
@@ -131,6 +135,7 @@ func TestHTTPOpenerUsesRangeRequests(t *testing.T) {
 	defer srv.Close()
 
 	op := NewHTTPOpener([]string{"127.0.0.1", "localhost"}, 5*time.Second, 0)
+	op.AllowPrivateHosts = true
 	rc, meta, err := op.Open(context.Background(), srv.URL+"/range")
 	if err != nil {
 		t.Fatal(err)
@@ -180,6 +185,7 @@ func TestHTTPOpenerMetaUsesHEAD(t *testing.T) {
 	defer srv.Close()
 
 	op := NewHTTPOpener([]string{"127.0.0.1", "localhost"}, 5*time.Second, 0)
+	op.AllowPrivateHosts = true
 	meta, err := op.Meta(context.Background(), srv.URL+"/image")
 	if err != nil {
 		t.Fatal(err)
@@ -192,6 +198,19 @@ func TestHTTPOpenerMetaUsesHEAD(t *testing.T) {
 	}
 	if len(gotMethods) != 1 || gotMethods[0] != http.MethodHead {
 		t.Fatalf("methods = %#v", gotMethods)
+	}
+}
+
+func TestHTTPOpenerBlocksPrivateAddressesByDefault(t *testing.T) {
+	for _, raw := range []string{"127.0.0.1", "10.0.0.1", "172.16.0.1", "192.168.1.1", "169.254.169.254", "::1", "fc00::1", "fe80::1"} {
+		t.Run(raw, func(t *testing.T) {
+			if !privateAddressBlocked(net.ParseIP(raw)) {
+				t.Fatalf("%s was not blocked", raw)
+			}
+		})
+	}
+	if privateAddressBlocked(net.ParseIP("8.8.8.8")) {
+		t.Fatal("public address was blocked")
 	}
 }
 

@@ -205,6 +205,53 @@ func TestTransformMaxDerivativeBytes(t *testing.T) {
 	}
 }
 
+func TestTransformToFileUsesFileEncoder(t *testing.T) {
+	p := newTestPipeline(t)
+	req := mustParseImageRequest(t, "sample.png/full/100,/0/default.png")
+	out, err := os.CreateTemp(t.TempDir(), "derivative-*.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer out.Close()
+
+	res, err := p.Transform(context.Background(), req, out)
+	if err != nil {
+		t.Fatalf("transform: %v", err)
+	}
+	if res.ContentType != "image/png" {
+		t.Fatalf("content-type = %q", res.ContentType)
+	}
+	if _, err := out.Seek(0, io.SeekStart); err != nil {
+		t.Fatal(err)
+	}
+	got, err := io.ReadAll(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) == 0 {
+		t.Fatal("empty file output")
+	}
+	img := decodePNG(t, got)
+	if img.Bounds().Dx() != 100 || img.Bounds().Dy() != 50 {
+		t.Fatalf("decoded dims = %dx%d, want 100x50", img.Bounds().Dx(), img.Bounds().Dy())
+	}
+}
+
+func TestTransformToFileMaxDerivativeBytes(t *testing.T) {
+	p := newTestPipelineWithLimits(t, Limits{MaxDerivativeBytes: 16})
+	req := mustParseImageRequest(t, "sample.png/full/max/0/default.png")
+	out, err := os.CreateTemp(t.TempDir(), "derivative-*.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer out.Close()
+
+	_, err = p.Transform(context.Background(), req, out)
+	if err == nil || !strings.Contains(err.Error(), "max_derivative_bytes") {
+		t.Fatalf("err = %v, want max_derivative_bytes failure", err)
+	}
+}
+
 func TestChooseJP2Page(t *testing.T) {
 	tests := []struct {
 		name             string

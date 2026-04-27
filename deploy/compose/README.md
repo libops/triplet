@@ -36,5 +36,13 @@ Then:
 curl http://localhost:8080/iiif/3/sample.png/info.json
 ```
 
+Presentation writes are disabled by default. To exercise the writable
+annotation route and conformance write checks:
+
+```sh
+TRIPLET_PRESENTATION_WRITE_ENABLED=true TRIPLET_PRESENTATION_WRITE_TOKEN=dev-token docker compose up
+TRIPLET_PRESENTATION_WRITE_TOKEN=dev-token ../../scripts/conformance.sh
+```
+
 For TLS, front this with nginx, Caddy, or your reverse proxy of choice — the
 triplet container does not terminate TLS itself.

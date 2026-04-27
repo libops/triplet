@@ -1,0 +1,29 @@
+{
+  "@context": "http://iiif.io/api/presentation/3/context.json",
+  "id": "http://localhost:8080/presentation/v3/item-1/manifest",
+  "type": "Manifest",
+  "label": {
+    "en": [
+      "Triplet conformance fixture"
+    ]
+  },
+  "items": [
+    {
+      "id": "http://localhost:8080/presentation/v3/item-1/canvas/canvas-1",
+      "type": "Canvas",
+      "label": {
+        "en": [
+          "Page 1"
+        ]
+      },
+      "height": 100,
+      "width": 100,
+      "annotations": [
+        {
+          "id": "http://localhost:8080/presentation/v3/item-1/canvas/canvas-1/annotations",
+          "type": "AnnotationPage"
+        }
+      ]
+    }
+  ]
+}

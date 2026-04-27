@@ -73,6 +73,9 @@ sources:
 			body: `
 server:
   public_base_url: http://localhost:8080
+iiif:
+  image:
+    enabled: true
 sources:
   default: azure
 `,
@@ -125,6 +128,9 @@ sources:
 			body: `
 server:
   public_base_url: http://localhost:8080
+iiif:
+  image:
+    enabled: true
 sources:
   default: file
 `,
@@ -216,6 +222,19 @@ sources:
     root: /tmp
 `,
 			wantErr: "iiif.presentation.write_token is required",
+		},
+		{
+			name: "presentation only does not require image source",
+			body: `
+server:
+  public_base_url: http://localhost:8080
+iiif:
+  image:
+    enabled: false
+  presentation:
+    enabled: true
+    root: /tmp
+`,
 		},
 		{
 			name: "auth enabled requires permit-all opt-in",

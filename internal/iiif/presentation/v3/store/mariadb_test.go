@@ -47,7 +47,7 @@ func TestMariaDBStoreIntegration(t *testing.T) {
 	}
 
 	page := []byte(`{"@context":"http://iiif.io/api/presentation/3/context.json","id":"http://example.test/presentation/v3/item-1/canvas/canvas-1/annotations","type":"AnnotationPage","items":[]}`)
-	if err := st.PutAnnotationPage(ctx, "item-1", "canvas-1", page); err != nil {
+	if err := st.PutAnnotationPage(ctx, "item-1", "canvas-1", page, "*"); err != nil {
 		t.Fatal(err)
 	}
 	got, err = st.GetAnnotationPage(ctx, "item-1", "canvas-1")
