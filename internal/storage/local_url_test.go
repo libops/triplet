@@ -8,9 +8,11 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -175,7 +177,8 @@ func TestLocalURLFallbackSupportsMultipleRoots(t *testing.T) {
 			{Prefix: "/system/files", File: systemOp},
 			{Prefix: "/fedora", File: fedoraOp},
 		},
-		Fallback: errOpener{},
+		AllowedHosts: []string{"repo.example.edu"},
+		Fallback:     errOpener{},
 	}
 
 	tests := []struct {
@@ -203,7 +206,7 @@ func TestLocalURLFallbackSupportsMultipleRoots(t *testing.T) {
 	}
 }
 
-func TestLocalURLFallbackPathOnlyPrefixDoesNotMatchURLIdentifier(t *testing.T) {
+func TestLocalURLFallbackPathOnlyPrefixRequiresAllowedURLHost(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "node"), 0o755); err != nil {
 		t.Fatal(err)
@@ -220,13 +223,354 @@ func TestLocalURLFallbackPathOnlyPrefixDoesNotMatchURLIdentifier(t *testing.T) {
 			Prefix: "/system/files",
 			File:   fileOp,
 		}},
-		Fallback: errOpener{},
+		AllowedHosts: []string{"repo.example.edu"},
+		Fallback:     errOpener{},
 	}
 
 	_, _, err = op.Open(context.Background(), "https://attacker.example/system/files/node/private.jp2")
 	if err == nil || err.Error() != "fallback should not be called" {
 		t.Fatalf("err = %v", err)
 	}
+}
+
+func TestLocalURLFallbackPathOnlyPrefixMatchesAllowedURLHost(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "node"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "node", "private.jp2"), []byte("private"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fileOp, err := NewFileOpener(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	op := &LocalURLFallback{
+		Mappings: []LocalURLMapping{{
+			Prefix: "/system/files",
+			File:   fileOp,
+		}},
+		AllowedHosts: []string{"repo.example.edu"},
+		Fallback:     errOpener{},
+	}
+
+	rc, _, err := op.Open(context.Background(), "https://repo.example.edu/system/files/node/private.jp2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rc.Close()
+	body, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != "private" {
+		t.Fatalf("body = %q", body)
+	}
+}
+
+func TestLocalURLFallbackPathOnlyPrefixAuthProbeUsesLocalFile(t *testing.T) {
+	root := t.TempDir()
+	localPath := filepath.Join("derivatives", "service", "node", "193595", "456524-service.jp2")
+	if err := os.MkdirAll(filepath.Join(root, filepath.Dir(localPath)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, localPath), []byte("local jp2"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var probes atomic.Int32
+	var gotMethod, gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		probes.Add(1)
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	fileOp, err := NewFileOpener(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	op := &LocalURLFallback{
+		Mappings: []LocalURLMapping{{
+			Prefix:    "/system/files",
+			File:      fileOp,
+			AuthProbe: true,
+		}},
+		AllowedHosts: []string{"127.0.0.1"},
+		Fallback:     errOpener{},
+		AuthFallback: testAuthHTTP(t, srv),
+	}
+	identifier := srv.URL + "/system/files/" + localPath
+
+	rc, meta, err := op.Open(context.Background(), identifier)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rc.Close()
+	body, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != "local jp2" {
+		t.Fatalf("body = %q", body)
+	}
+	if meta.Size != int64(len("local jp2")) {
+		t.Fatalf("size = %d", meta.Size)
+	}
+	if got := probes.Load(); got != 1 {
+		t.Fatalf("probes = %d", got)
+	}
+	if gotMethod != http.MethodHead {
+		t.Fatalf("method = %s", gotMethod)
+	}
+	if gotPath != "/system/files/"+localPath {
+		t.Fatalf("path = %q", gotPath)
+	}
+}
+
+func TestLocalURLFallbackPathOnlyPrefixMetaAuthProbeUsesLocalFile(t *testing.T) {
+	root := t.TempDir()
+	localPath := filepath.Join("derivatives", "service", "node", "193595", "456524-service.jp2")
+	if err := os.MkdirAll(filepath.Join(root, filepath.Dir(localPath)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, localPath), []byte("local jp2"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var probes atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		probes.Add(1)
+		if r.Method != http.MethodHead {
+			t.Fatalf("method = %s", r.Method)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	fileOp, err := NewFileOpener(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	op := &LocalURLFallback{
+		Mappings: []LocalURLMapping{{
+			Prefix:    "/system/files",
+			File:      fileOp,
+			AuthProbe: true,
+		}},
+		AllowedHosts: []string{"127.0.0.1"},
+		Fallback:     errOpener{},
+		AuthFallback: testAuthHTTP(t, srv),
+	}
+
+	meta, err := op.Meta(context.Background(), srv.URL+"/system/files/"+localPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.Size != int64(len("local jp2")) {
+		t.Fatalf("size = %d", meta.Size)
+	}
+	if got := probes.Load(); got != 1 {
+		t.Fatalf("probes = %d", got)
+	}
+}
+
+func TestLocalURLFallbackPathOnlyPrefixAuthProbeStatusControlsLocalRead(t *testing.T) {
+	tests := []struct {
+		name       string
+		statusCode int
+		wantBody   string
+		wantErr    error
+	}{
+		{name: "allow", statusCode: http.StatusOK, wantBody: "local jp2"},
+		{name: "deny", statusCode: http.StatusForbidden, wantErr: ErrForbidden},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			localPath := filepath.Join("derivatives", "service", "node", "193595", "456524-service.jp2")
+			if err := os.MkdirAll(filepath.Join(root, filepath.Dir(localPath)), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(root, localPath), []byte("local jp2"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			var probes atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				probes.Add(1)
+				if r.Method != http.MethodHead {
+					t.Fatalf("method = %s", r.Method)
+				}
+				if r.URL.Path != "/system/files/"+localPath {
+					t.Fatalf("path = %q", r.URL.Path)
+				}
+				w.WriteHeader(tt.statusCode)
+			}))
+			defer srv.Close()
+			fileOp, err := NewFileOpener(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			op := &LocalURLFallback{
+				Mappings: []LocalURLMapping{{
+					Prefix:    "/system/files",
+					File:      fileOp,
+					AuthProbe: true,
+				}},
+				AllowedHosts: []string{"127.0.0.1"},
+				Fallback:     errOpener{},
+				AuthFallback: testAuthHTTP(t, srv),
+			}
+
+			rc, _, err := op.Open(context.Background(), srv.URL+"/system/files/"+localPath)
+			if tt.wantErr != nil {
+				if !errors.Is(err, tt.wantErr) {
+					t.Fatalf("err = %v, want %v", err, tt.wantErr)
+				}
+				if rc != nil {
+					_ = rc.Close()
+					t.Fatal("expected no reader when auth probe denies")
+				}
+			} else {
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer rc.Close()
+				body, err := io.ReadAll(rc)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if string(body) != tt.wantBody {
+					t.Fatalf("body = %q", body)
+				}
+			}
+			if got := probes.Load(); got != 1 {
+				t.Fatalf("probes = %d", got)
+			}
+		})
+	}
+}
+
+func TestLocalURLFallbackAnonymousAuthProbeTTL(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		root := t.TempDir()
+		if err := os.WriteFile(filepath.Join(root, "private.jp2"), []byte("private"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		prober := &fakeAuthProbeTransport{}
+		prober.roundTrip = func(r *http.Request) int {
+			if r.Method != http.MethodHead {
+				t.Fatalf("method = %s", r.Method)
+			}
+			if got := r.Header.Get("Cookie"); got != "" {
+				t.Fatalf("cookie = %q", got)
+			}
+			return http.StatusOK
+		}
+		fileOp, err := NewFileOpener(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		const ttl = 10 * time.Second
+		op := &LocalURLFallback{
+			Mappings: []LocalURLMapping{{
+				Prefix:                "/system/files",
+				File:                  fileOp,
+				AuthProbe:             true,
+				AuthAnonymousCacheTTL: ttl,
+			}},
+			AllowedHosts: []string{"repo.example.edu"},
+			Fallback:     errOpener{},
+			AuthFallback: fakeAuthHTTP(prober),
+		}
+		identifier := "https://repo.example.edu/system/files/private.jp2"
+
+		openAndClose(t, op, context.Background(), identifier)
+		if got := prober.probes.Load(); got != 1 {
+			t.Fatalf("initial probes = %d", got)
+		}
+
+		time.Sleep(ttl - time.Nanosecond)
+		synctest.Wait()
+		openAndClose(t, op, context.Background(), identifier)
+		if got := prober.probes.Load(); got != 1 {
+			t.Fatalf("probes before ttl = %d", got)
+		}
+
+		time.Sleep(2 * time.Nanosecond)
+		synctest.Wait()
+		openAndClose(t, op, context.Background(), identifier)
+		if got := prober.probes.Load(); got != 2 {
+			t.Fatalf("probes after ttl = %d", got)
+		}
+	})
+}
+
+func TestLocalURLFallbackAuthenticatedAuthProbeTTL(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		root := t.TempDir()
+		if err := os.WriteFile(filepath.Join(root, "private.jp2"), []byte("private"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		var anonProbes, authProbes atomic.Int32
+		prober := &fakeAuthProbeTransport{}
+		prober.roundTrip = func(r *http.Request) int {
+			if got := r.Header.Get("Cookie"); got == "SESS=abc" {
+				authProbes.Add(1)
+				return http.StatusOK
+			}
+			anonProbes.Add(1)
+			return http.StatusForbidden
+		}
+		fileOp, err := NewFileOpener(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		const anonTTL = time.Hour
+		const authTTL = 10 * time.Second
+		op := &LocalURLFallback{
+			Mappings: []LocalURLMapping{{
+				Prefix:                    "/system/files",
+				File:                      fileOp,
+				AuthProbe:                 true,
+				AuthAnonymousCacheTTL:     anonTTL,
+				AuthAuthenticatedCacheTTL: authTTL,
+			}},
+			AllowedHosts: []string{"repo.example.edu"},
+			Fallback:     errOpener{},
+			AuthFallback: fakeAuthHTTP(prober),
+		}
+		ctx := ContextWithAuthHeaders(context.Background(), http.Header{
+			"Cookie": []string{"SESS=abc"},
+		})
+		identifier := "https://repo.example.edu/system/files/private.jp2"
+
+		openAndClose(t, op, ctx, identifier)
+		if got := anonProbes.Load(); got != 1 {
+			t.Fatalf("initial anonymous probes = %d", got)
+		}
+		if got := authProbes.Load(); got != 1 {
+			t.Fatalf("initial authenticated probes = %d", got)
+		}
+
+		time.Sleep(authTTL - time.Nanosecond)
+		synctest.Wait()
+		openAndClose(t, op, ctx, identifier)
+		if got := anonProbes.Load(); got != 1 {
+			t.Fatalf("anonymous probes before auth ttl = %d", got)
+		}
+		if got := authProbes.Load(); got != 1 {
+			t.Fatalf("authenticated probes before ttl = %d", got)
+		}
+
+		time.Sleep(2 * time.Nanosecond)
+		synctest.Wait()
+		openAndClose(t, op, ctx, identifier)
+		if got := anonProbes.Load(); got != 1 {
+			t.Fatalf("anonymous probes after auth ttl = %d", got)
+		}
+		if got := authProbes.Load(); got != 2 {
+			t.Fatalf("authenticated probes after ttl = %d", got)
+		}
+	})
 }
 
 func TestLocalURLFallbackAuthProbeAnonymousSucceedsAndCaches(t *testing.T) {
@@ -672,6 +1016,43 @@ type errOpener struct{}
 
 func (errOpener) Open(context.Context, string) (io.ReadSeekCloser, Meta, error) {
 	return nil, Meta{}, errors.New("fallback should not be called")
+}
+
+func openAndClose(t *testing.T, op Opener, ctx context.Context, identifier string) {
+	t.Helper()
+	rc, _, err := op.Open(ctx, identifier)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rc.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+type fakeAuthProbeTransport struct {
+	probes    atomic.Int32
+	roundTrip func(*http.Request) int
+}
+
+func (f *fakeAuthProbeTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	f.probes.Add(1)
+	status := http.StatusOK
+	if f.roundTrip != nil {
+		status = f.roundTrip(r)
+	}
+	return &http.Response{
+		StatusCode: status,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(strings.NewReader("")),
+		Request:    r,
+	}, nil
+}
+
+func fakeAuthHTTP(rt http.RoundTripper) *HTTPOpener {
+	op := NewHTTPOpener([]string{"repo.example.edu"}, 0, 0)
+	op.Client = &http.Client{Transport: rt}
+	op.ForwardAuthHeaders = true
+	return op
 }
 
 func testAuthHTTP(t *testing.T, srv *httptest.Server) *HTTPOpener {

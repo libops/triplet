@@ -56,7 +56,7 @@ func Build(cfg *config.Config, logger *slog.Logger) (*http.Server, error) {
 	}
 
 	if cfg.IIIF.Image.Enabled {
-		src, cleanupSource, err := buildSource(cfg)
+		src, cleanupSource, err := buildSource(cfg, logger)
 		if err != nil {
 			return nil, err
 		}
@@ -208,7 +208,7 @@ func Run(ctx context.Context, s *http.Server, logger *slog.Logger) error {
 	}
 }
 
-func buildSource(cfg *config.Config) (storage.Opener, func(), error) {
+func buildSource(cfg *config.Config, logger *slog.Logger) (storage.Opener, func(), error) {
 	ctx := context.Background()
 	var cleanup func()
 
@@ -265,7 +265,9 @@ func buildSource(cfg *config.Config) (storage.Opener, func(), error) {
 		if len(localURLMappings) > 0 {
 			httpOp = &storage.LocalURLFallback{
 				Mappings:     localURLMappings,
+				AllowedHosts: cfg.Sources.HTTP.AllowedHosts,
 				Fallback:     httpOp,
+				Logger:       logger,
 				AuthFallback: authOp,
 			}
 		}

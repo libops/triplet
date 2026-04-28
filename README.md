@@ -1,18 +1,16 @@
 # triplet
 
 A IIIF server in Go. Implements the [IIIF Image API 3.0][image-api],
-[IIIF Presentation API 3.0][presentation-api], and minimal Auth/Search
-surfaces, with optional non-spec extensions for byte-stream transforms and
-uploads.
+[IIIF Presentation API 3.0][presentation-api]
 
-All image processing is done by [libvips](https://github.com/libvips/libvips).
+All image processing is done by [libvips](https://github.com/libvips/libvips) thanks to [github.com/davidbyttow/govips](https://github.com/davidbyttow/govips)
 
 [image-api]: https://iiif.io/api/image/3.0/
 [presentation-api]: https://iiif.io/api/presentation/3.0/
 
 ## Quick start
 
-```sh
+```bash
 docker run -p 8080:8080 ghcr.io/libops/triplet:main
 ```
 
@@ -32,13 +30,11 @@ Current notable knobs:
 - `iiif.image.max_output_pixels`, `iiif.image.max_source_pixels`,
   `iiif.image.max_derivative_bytes`, and `iiif.image.max_concurrent_transforms`
   bound libvips request work.
-- `iiif.search.*` enables an experimental Content Search 2.0 route with the
-  default no-op backend. It is not a production search index.
-- `iiif.auth.*` enables the Authorization Flow 2.0 route. The built-in
-  permit-all authorizer requires `iiif.auth.development_permit_all: true` and
-  is intended only for development.
 - `iiif.presentation.root` or `iiif.presentation.dsn` selects filesystem or MariaDB storage.
 - `sources.default` can be `file`, `http`, or `gcs`.
+- `sources.file.url_mappings` lets HTTP identifiers resolve from local disk first.
+  For example, `/system/files` can map to `/private`, while `/_flysystem/fedora` can map to an OCFL root.
+  Path-only mappings are scoped by `sources.http.allowed_hosts`.
 - `sources.http.allowed_hosts` is the primary security boundary for remote
   source images. Keep it to the exact upstream hostnames Triplet is allowed to
   fetch; an empty list denies all HTTP sources and `*` should only be used in
@@ -54,6 +50,14 @@ more than routing configuration: it prevents arbitrary URL fetches, constrains
 redirect targets, and keeps the native image parser surface limited to trusted
 repositories. Source caching improves performance but does not replace the
 allowlist; cache fills still pass through the same host checks.
+
+Local URL mappings are useful for distributed deployments where Drupal/Fedora
+URLs and Triplet can see the same filesystems. Triplet strips the configured
+URL path prefix, checks the mapped root on disk, and falls back to HTTP
+streaming on a miss. For protected paths, `auth_probe: true` asks the original
+Drupal URL for authorization before serving the local file; anonymous probe
+results and credentialed probe results are cached separately for short,
+configurable TTLs.
 
 ## Format Support
 
@@ -79,7 +83,7 @@ loading, or broader parser surface area.
 
 ### Enabled
 
-| Option | What it enables | Triplet implication |
+| Option | What it enables | libvips implication |
 |---|---|---|
 | `cgif` | Native GIF save support in libvips. | Required for IIIF `gif` response/output without ImageMagick. |
 | `imagequant` | Palette quantization support. | Required for native `gifsave_buffer`; also improves palette output quality. |
@@ -99,7 +103,7 @@ response format. Operators can re-block those classes with
 
 ### Disabled
 
-| Option | What disabling means | Triplet implication |
+| Option | What disabling means | libvips implication |
 |---|---|---|
 | `modules` | No dynamic libvips plugin modules loaded at runtime. | Improves container predictability and security; needed support is compiled in. |
 | `introspection` | No GObject introspection metadata. | Fine; govips uses cgo bindings, not runtime GIR metadata. |

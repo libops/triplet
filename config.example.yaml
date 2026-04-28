@@ -121,14 +121,16 @@ sources:
     # identifier starts with one of these decoded URL prefixes, Triplet strips
     # the prefix and checks the remaining path under the mapping root first.
     # url_mappings:
-    #   - prefix: https://islandora-stage.lib.lehigh.edu/system/files
-    #     root: /mnt/foo
+    #   - prefix: /sites/default/files
+    #     root: /public
+    #   - prefix: /system/files
+    #     root: /private
     #     auth_probe: true
     #     auth_anonymous_cache_ttl: 720h
     #     auth_authenticated_cache_ttl: 168h
     #     auth_cache_max_entries: 4096
-    #   - prefix: https://islandora-stage.lib.lehigh.edu/fedora
-    #     root: /bar
+    #   - prefix: /fedora
+    #     root: /fcrepo
     #     ocfl: true
     #     auth_probe: true
     # `ocfl: true` means the stripped path is a Fedora resource path stored
@@ -150,7 +152,7 @@ sources:
   # allow_private_hosts is explicitly enabled. Source caching does not bypass
   # these checks.
   # http:
-  #   allowed_hosts: [example.org, iiif.example.edu]
+  #   allowed_hosts: [islandora-stage.lib.lehigh.edu]
   #   allow_private_hosts: false
   #   request_timeout: 30s
   #   max_bytes: 52428800

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"mime"
 	"net/http"
 	"net/url"
@@ -18,6 +19,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/libops/triplet/internal/redact"
 )
 
 // LocalURLFallback tries a local filesystem lookup for selected URL
@@ -27,7 +30,10 @@ type LocalURLFallback struct {
 	File     *FileOpener
 	OCFL     bool
 	Mappings []LocalURLMapping
-	Fallback Opener
+	// AllowedHosts gates path-only mappings for absolute HTTP identifiers.
+	AllowedHosts []string
+	Fallback     Opener
+	Logger       *slog.Logger
 	// AuthFallback is used for matched auth-probed URL mappings when local
 	// lookup misses. It should bypass shared source caches.
 	AuthFallback *HTTPOpener
@@ -72,6 +78,7 @@ func (l *LocalURLFallback) Open(ctx context.Context, identifier string) (io.Read
 	if ok || err != nil {
 		return rc, meta, err
 	}
+	l.debug(ctx, "local url mapping miss; using fallback", identifier, "operation", "open")
 	return l.Fallback.Open(ctx, identifier)
 }
 
@@ -89,8 +96,10 @@ func (l *LocalURLFallback) Meta(ctx context.Context, identifier string) (Meta, e
 	}
 	metaReader, ok := l.Fallback.(MetaReader)
 	if !ok {
+		l.debug(ctx, "local url mapping miss; using fallback", identifier, "operation", "meta")
 		return Meta{}, fmt.Errorf("metadata unavailable for identifier")
 	}
+	l.debug(ctx, "local url mapping miss; using fallback", identifier, "operation", "meta")
 	return metaReader.Meta(ctx, identifier)
 }
 
@@ -102,39 +111,51 @@ func (l *LocalURLFallback) openLocalMeta(ctx context.Context, identifier string)
 		if mapping.File == nil {
 			continue
 		}
-		path, ok := stripLocalURLPrefix(identifier, mapping.Prefix)
+		path, ok := l.stripLocalURLPrefix(identifier, mapping.Prefix)
 		if !ok {
+			l.debug(ctx, "local url mapping skipped", identifier, "operation", "meta", "prefix", mapping.Prefix)
 			continue
 		}
+		l.debug(ctx, "local url mapping matched", identifier, "operation", "meta", "prefix", mapping.Prefix, "path", path, "disk_path", mappingDiskPath(mapping, path), "ocfl", mapping.OCFL, "auth_probe", mapping.AuthProbe)
 		if mapping.OCFL {
 			_, meta, err := l.ocflMeta(mapping, path)
 			if errors.Is(err, ErrNotFound) {
+				l.debug(ctx, "local url ocfl object missing", identifier, "operation", "meta", "prefix", mapping.Prefix, "path", path, "disk_path", mappingDiskPath(mapping, path))
 				if mapping.AuthProbe && l.AuthFallback != nil {
+					l.debug(ctx, "local url using authenticated fallback after local miss", identifier, "operation", "meta", "prefix", mapping.Prefix)
 					return l.openAuthFallback(ctx, identifier, true)
 				}
 				continue
 			}
 			if err == nil {
 				if authErr := l.authorize(ctx, identifier, mapping); authErr != nil {
+					l.debug(ctx, "local url auth denied local file", identifier, "operation", "meta", "prefix", mapping.Prefix, "err", authErr)
 					return nil, Meta{}, false, authErr
 				}
+				l.debug(ctx, "local url serving local metadata", identifier, "operation", "meta", "prefix", mapping.Prefix, "path", path)
 				return nil, meta, true, nil
 			}
+			l.debug(ctx, "local url ocfl metadata error", identifier, "operation", "meta", "prefix", mapping.Prefix, "path", path, "err", err)
 			return nil, meta, true, err
 		}
 		meta, err := mapping.File.Meta(ctx, path)
 		if errors.Is(err, ErrNotFound) {
+			l.debug(ctx, "local url file missing", identifier, "operation", "meta", "prefix", mapping.Prefix, "path", path, "disk_path", mappingDiskPath(mapping, path))
 			if mapping.AuthProbe && l.AuthFallback != nil {
+				l.debug(ctx, "local url using authenticated fallback after local miss", identifier, "operation", "meta", "prefix", mapping.Prefix)
 				return l.openAuthFallback(ctx, identifier, true)
 			}
 			continue
 		}
 		if err == nil {
 			if authErr := l.authorize(ctx, identifier, mapping); authErr != nil {
+				l.debug(ctx, "local url auth denied local file", identifier, "operation", "meta", "prefix", mapping.Prefix, "err", authErr)
 				return nil, Meta{}, false, authErr
 			}
+			l.debug(ctx, "local url serving local metadata", identifier, "operation", "meta", "prefix", mapping.Prefix, "path", path, "disk_path", mappingDiskPath(mapping, path))
 			return nil, meta, true, nil
 		}
+		l.debug(ctx, "local url file metadata error", identifier, "operation", "meta", "prefix", mapping.Prefix, "path", path, "disk_path", mappingDiskPath(mapping, path), "err", err)
 		return nil, meta, true, err
 	}
 	return nil, Meta{}, false, nil
@@ -148,50 +169,66 @@ func (l *LocalURLFallback) openLocal(ctx context.Context, identifier string) (io
 		if mapping.File == nil {
 			continue
 		}
-		path, ok := stripLocalURLPrefix(identifier, mapping.Prefix)
+		path, ok := l.stripLocalURLPrefix(identifier, mapping.Prefix)
 		if !ok {
+			l.debug(ctx, "local url mapping skipped", identifier, "operation", "open", "prefix", mapping.Prefix)
 			continue
 		}
+		l.debug(ctx, "local url mapping matched", identifier, "operation", "open", "prefix", mapping.Prefix, "path", path, "disk_path", mappingDiskPath(mapping, path), "ocfl", mapping.OCFL, "auth_probe", mapping.AuthProbe)
 		if mapping.OCFL {
 			diskPath, meta, err := l.ocflMeta(mapping, path)
 			if errors.Is(err, ErrNotFound) {
+				l.debug(ctx, "local url ocfl object missing", identifier, "operation", "open", "prefix", mapping.Prefix, "path", path, "disk_path", mappingDiskPath(mapping, path))
 				if mapping.AuthProbe && l.AuthFallback != nil {
+					l.debug(ctx, "local url using authenticated fallback after local miss", identifier, "operation", "open", "prefix", mapping.Prefix)
 					return l.openAuthFallback(ctx, identifier, false)
 				}
 				continue
 			}
 			if err == nil {
 				if authErr := l.authorize(ctx, identifier, mapping); authErr != nil {
+					l.debug(ctx, "local url auth denied local file", identifier, "operation", "open", "prefix", mapping.Prefix, "err", authErr)
 					return nil, Meta{}, false, authErr
 				}
 				rc, err := os.Open(diskPath)
 				if err != nil {
 					if errors.Is(err, fs.ErrNotExist) {
+						l.debug(ctx, "local url ocfl content missing", identifier, "operation", "open", "prefix", mapping.Prefix, "path", path, "disk_path", diskPath)
 						continue
 					}
 					return nil, Meta{}, true, fmt.Errorf("open ocfl file %q: %w", path, err)
 				}
+				l.debug(ctx, "local url serving local file", identifier, "operation", "open", "prefix", mapping.Prefix, "path", path, "disk_path", diskPath)
 				return rc, meta, true, nil
 			}
+			l.debug(ctx, "local url ocfl metadata error", identifier, "operation", "open", "prefix", mapping.Prefix, "path", path, "err", err)
 			return nil, meta, true, err
 		}
 		meta, err := mapping.File.Meta(ctx, path)
 		if errors.Is(err, ErrNotFound) {
+			l.debug(ctx, "local url file missing", identifier, "operation", "open", "prefix", mapping.Prefix, "path", path, "disk_path", mappingDiskPath(mapping, path))
 			if mapping.AuthProbe && l.AuthFallback != nil {
+				l.debug(ctx, "local url using authenticated fallback after local miss", identifier, "operation", "open", "prefix", mapping.Prefix)
 				return l.openAuthFallback(ctx, identifier, false)
 			}
 			continue
 		}
 		if err == nil {
 			if authErr := l.authorize(ctx, identifier, mapping); authErr != nil {
+				l.debug(ctx, "local url auth denied local file", identifier, "operation", "open", "prefix", mapping.Prefix, "err", authErr)
 				return nil, Meta{}, false, authErr
 			}
 			rc, meta, err := mapping.File.Open(ctx, path)
 			if errors.Is(err, ErrNotFound) {
+				l.debug(ctx, "local url file disappeared before open", identifier, "operation", "open", "prefix", mapping.Prefix, "path", path, "disk_path", mappingDiskPath(mapping, path))
 				continue
+			}
+			if err == nil {
+				l.debug(ctx, "local url serving local file", identifier, "operation", "open", "prefix", mapping.Prefix, "path", path, "disk_path", mappingDiskPath(mapping, path))
 			}
 			return rc, meta, true, err
 		}
+		l.debug(ctx, "local url file metadata error", identifier, "operation", "open", "prefix", mapping.Prefix, "path", path, "disk_path", mappingDiskPath(mapping, path), "err", err)
 		return nil, meta, true, err
 	}
 	return nil, Meta{}, false, nil
@@ -221,7 +258,7 @@ func (l *LocalURLFallback) openAuthFallback(ctx context.Context, identifier stri
 	return rc, meta, true, err
 }
 
-func stripLocalURLPrefix(identifier, prefix string) (string, bool) {
+func (l *LocalURLFallback) stripLocalURLPrefix(identifier, prefix string) (string, bool) {
 	if prefix == "" {
 		return "", false
 	}
@@ -231,11 +268,30 @@ func stripLocalURLPrefix(identifier, prefix string) (string, bool) {
 	prefix = strings.TrimRight(prefix, "/")
 	if strings.HasPrefix(prefix, "/") {
 		if u, err := url.Parse(identifier); err == nil && u.Scheme != "" && u.Host != "" {
-			return "", false
+			if !localURLHostAllowed(u.Hostname(), l.AllowedHosts) {
+				return "", false
+			}
+			return stripLocalPathPrefix(u.Path, prefix)
 		}
 		return stripLocalPathPrefix(identifier, prefix)
 	}
 	return stripLocalPathPrefix(identifier, prefix)
+}
+
+func localURLHostAllowed(host string, allowedHosts []string) bool {
+	if len(allowedHosts) == 0 {
+		return false
+	}
+	host = strings.ToLower(strings.TrimSpace(host))
+	if slices.Contains(allowedHosts, "*") {
+		return true
+	}
+	for _, allowed := range allowedHosts {
+		if strings.ToLower(strings.TrimSpace(allowed)) == host {
+			return true
+		}
+	}
+	return false
 }
 
 func stripLocalPathPrefix(identifier, prefix string) (string, bool) {
@@ -283,14 +339,17 @@ func (l *LocalURLFallback) authorizeAuthenticated(ctx context.Context, identifie
 
 func (l *LocalURLFallback) probeCached(ctx context.Context, key, identifier string, headers http.Header, ttl time.Duration, maxEntries int) error {
 	if wait, ok := l.beginAuthProbe(key); ok {
+		l.debug(ctx, "local url auth probe waiting on in-flight probe", identifier, "cache_key", redact.Hash(key))
 		select {
 		case err := <-wait:
+			l.debug(ctx, "local url auth probe in-flight result", identifier, "cache_key", redact.Hash(key), "err", err)
 			return err
 		case <-ctx.Done():
 			return ctx.Err()
 		}
 	}
 	err := l.probe(ctx, identifier, headers)
+	l.debug(ctx, "local url auth probe completed", identifier, "cache_key", redact.Hash(key), "cacheable", cacheableAuthProbeResult(err), "ttl", ttl.String(), "err", err)
 	if ttl > 0 && cacheableAuthProbeResult(err) {
 		l.storeAuth(key, authCacheScope(key), err, ttl, maxEntries)
 	}
@@ -464,6 +523,7 @@ func (l *LocalURLFallback) probeRequest(ctx context.Context, method, identifier 
 	}
 	target, err := prober.parseTarget(identifier)
 	if err != nil {
+		l.debug(ctx, "local url auth probe target rejected", identifier, "method", method, "err", err)
 		return err
 	}
 	req, err := http.NewRequestWithContext(ctx, method, target.String(), nil)
@@ -479,11 +539,14 @@ func (l *LocalURLFallback) probeRequest(ctx context.Context, method, identifier 
 	if method == http.MethodGet {
 		req.Header.Set("Range", "bytes=0-0")
 	}
+	l.debug(ctx, "local url auth probe request", identifier, "method", method, "url", target.Redacted(), "with_auth", hasAuthHeaders(headers))
 	resp, err := prober.client().Do(req)
 	if err != nil {
+		l.debug(ctx, "local url auth probe request error", identifier, "method", method, "url", target.Redacted(), "err", err)
 		return fmt.Errorf("auth probe %q: %w", identifier, err)
 	}
 	defer resp.Body.Close()
+	l.debug(ctx, "local url auth probe response", identifier, "method", method, "url", target.Redacted(), "status", resp.StatusCode)
 	switch resp.StatusCode {
 	case http.StatusOK, http.StatusPartialContent:
 		return nil
@@ -497,6 +560,21 @@ func (l *LocalURLFallback) probeRequest(ctx context.Context, method, identifier 
 		}
 	}
 	return fmt.Errorf("auth probe %q: upstream status %d", identifier, resp.StatusCode)
+}
+
+func (l *LocalURLFallback) debug(ctx context.Context, msg, identifier string, args ...any) {
+	if l == nil || l.Logger == nil || !l.Logger.Enabled(ctx, slog.LevelDebug) {
+		return
+	}
+	args = append(args, "identifier", redact.Identifier(identifier), "identifier_hash", redact.Hash(identifier))
+	l.Logger.DebugContext(ctx, msg, args...)
+}
+
+func mappingDiskPath(mapping LocalURLMapping, path string) string {
+	if mapping.File == nil {
+		return ""
+	}
+	return filepath.Join(mapping.File.Root, filepath.FromSlash(path))
 }
 
 func (l *LocalURLFallback) ocflMeta(mapping LocalURLMapping, path string) (string, Meta, error) {
