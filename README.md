@@ -97,9 +97,10 @@ loading, or broader parser surface area.
 | `zlib` | Deflate compression support. | Required by PNG/TIFF-related compression paths. |
 
 When `vips.block_untrusted` is enabled, Triplet still unblocks the libvips
-JPEG 2000 load/save operations because JP2 is an advertised IIIF source and
-response format. Operators can re-block those classes with
-`vips.blocked_operations` if their deployment does not accept JP2 collections.
+JPEG, PNG, WebP, GIF, JPEG 2000, and TIFF load/save operations because these
+are the image source and response formats Triplet intentionally serves.
+Operators can re-block those classes with `vips.blocked_operations` if their
+deployment does not accept a format.
 
 ### Disabled
 

@@ -30,7 +30,8 @@ vips:
   cache_max_files: 0
   report_leaks: false
   # Recommended hardening flag from the libvips security review. Triplet keeps
-  # JP2 load/save operations unblocked because JP2 is an advertised IIIF format.
+  # the advertised image source/response formats unblocked while leaving unused
+  # complex loaders blocked.
   block_untrusted: true
   # Optional libvips operation/class blocklist applied at startup before any
   # image processing. Names are libvips class names from `vips -l`; blocking a
