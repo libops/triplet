@@ -15,9 +15,12 @@ func TestParseRouting(t *testing.T) {
 		{"/abc", KindBase, "abc"},
 		{"abc/info.json", KindInfo, "abc"},
 		{"my%2Fid/info.json", KindInfo, "my/id"},
+		{"https%3A%2F%2Fexample.edu%2F_flysystem%2Ffedora%2F2024-01%2F305725.tiff", KindBase, "https://example.edu/_flysystem/fedora/2024-01/305725.tiff"},
+		{"https%3A%2F%2Fexample.edu%2F_flysystem%2Ffedora%2F2024-01%2F305725.tiff/info.json", KindInfo, "https://example.edu/_flysystem/fedora/2024-01/305725.tiff"},
 		{"abc/full/max/0/default.jpg", KindImage, "abc"},
 		{"a/b/info.json", KindInfo, "a/b"},
 		{"a/b/full/max/0/default.jpg", KindImage, "a/b"},
+		{"https%3A%2F%2Fexample.edu%2F_flysystem%2Ffedora%2F2024-01%2F305725.tiff/full/max/0/default.jpg", KindImage, "https://example.edu/_flysystem/fedora/2024-01/305725.tiff"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.path, func(t *testing.T) {

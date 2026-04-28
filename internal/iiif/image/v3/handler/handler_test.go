@@ -89,6 +89,24 @@ func TestBaseRedirectsToInfo(t *testing.T) {
 	}
 }
 
+func TestBaseRedirectsAbsoluteURIIdentifierToInfo(t *testing.T) {
+	srv, _ := setupTestServer(t)
+	defer srv.Close()
+	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	identifier := "https%3A%2F%2Fislandora-stage.lib.lehigh.edu%2F_flysystem%2Ffedora%2F2024-01%2F305725.tiff"
+	resp, err := client.Get(srv.URL + "/iiif/3/" + identifier)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	if got, want := resp.Header.Get("Location"), "/iiif/3/"+identifier+"/info.json"; got != want {
+		t.Fatalf("Location = %q, want %q", got, want)
+	}
+}
+
 func TestInfoJSON(t *testing.T) {
 	srv, _ := setupTestServer(t)
 	defer srv.Close()

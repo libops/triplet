@@ -104,10 +104,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	r = r.WithContext(storage.ContextWithAuthHeaders(r.Context(), r.Header))
-	rest := strings.TrimPrefix(r.URL.Path, h.prefix)
+	path := r.URL.EscapedPath()
+	rest := strings.TrimPrefix(path, h.prefix)
 	req, err := parse.Parse(rest)
 	if err != nil {
-		h.logger.Debug("parse request", "path", redact.Path(r.URL.Path), "err", err)
+		h.logger.Debug("parse request", "path", redact.Path(path), "err", err)
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -116,7 +117,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	switch req.Kind {
 	case parse.KindBase:
-		target := h.prefix + "/" + url.PathEscape(req.Identifier) + "/info.json"
+		target := h.prefix + "/" + escapeIdentifierPathSegment(req.Identifier) + "/info.json"
 		http.Redirect(w, r, target, http.StatusSeeOther)
 	case parse.KindInfo:
 		h.serveInfo(w, r, req.Identifier)
@@ -146,7 +147,7 @@ func (h *Handler) serveInfo(w http.ResponseWriter, r *http.Request, identifier s
 	}
 
 	info := types.BuildLevel2Info(
-		h.publicBaseURL+h.prefix+"/"+url.PathEscape(identifier),
+		h.publicBaseURL+h.prefix+"/"+escapeIdentifierPathSegment(identifier),
 		width, height,
 		h.infoLimits,
 	)
@@ -408,11 +409,15 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 }
 
 func (h *Handler) canonicalImageURL(req parse.Request) string {
-	return h.publicBaseURL + h.prefix + "/" + url.PathEscape(req.Identifier) + "/" +
+	return h.publicBaseURL + h.prefix + "/" + escapeIdentifierPathSegment(req.Identifier) + "/" +
 		regionString(req.Region) + "/" +
 		sizeString(req.Size) + "/" +
 		rotationString(req.Rotation) + "/" +
 		string(req.Quality) + "." + string(req.Format)
+}
+
+func escapeIdentifierPathSegment(identifier string) string {
+	return strings.ReplaceAll(url.PathEscape(identifier), ":", "%3A")
 }
 
 func regionString(r parse.Region) string {
