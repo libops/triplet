@@ -214,7 +214,7 @@ RUN rm -rf \
     /usr/local/share/man \
   && ldconfig \
   && groupadd --system triplet \
-  && useradd --system --gid triplet --uid 10001 --home-dir /nonexistent --shell /usr/sbin/nologin triplet
+  && useradd --system --gid triplet --uid 100 --home-dir /nonexistent --shell /usr/sbin/nologin triplet
 
 COPY --from=build /out/triplet /usr/local/bin/triplet
 COPY --from=build /out/triplet-healthcheck /usr/local/bin/triplet-healthcheck
