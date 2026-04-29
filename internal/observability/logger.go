@@ -65,6 +65,9 @@ func LoggingMiddleware(logger *slog.Logger) func(http.Handler) http.Handler {
 			ctx := context.WithValue(r.Context(), requestIDKey, rid)
 			ww := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 			next.ServeHTTP(ww, r.WithContext(ctx))
+			if r.URL.Path == "/healthz" {
+				return
+			}
 			logger.LogAttrs(ctx, slog.LevelInfo, "http",
 				slog.String("request_id", rid),
 				slog.String("method", r.Method),

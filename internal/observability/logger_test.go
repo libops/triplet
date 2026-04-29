@@ -44,3 +44,19 @@ func TestClientIPFallsBackToRemoteAddrHost(t *testing.T) {
 		t.Fatalf("clientIP = %q, want %q", got, "192.0.2.10")
 	}
 }
+
+func TestLoggingMiddlewareSkipsHealthcheck(t *testing.T) {
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logs, nil))
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("ok"))
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	rr := httptest.NewRecorder()
+	LoggingMiddleware(logger)(next).ServeHTTP(rr, req)
+
+	if logs.Len() != 0 {
+		t.Fatalf("healthcheck log = %q, want empty", logs.String())
+	}
+}
