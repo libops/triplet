@@ -222,6 +222,7 @@ COPY config.example.yaml /etc/triplet/config.yaml
 RUN ldd /usr/local/bin/triplet >/dev/null
 
 EXPOSE 8080
+HEALTHCHECK --interval=5s --timeout=5s --retries=3 CMD ["/usr/local/bin/triplet-healthcheck", "-url", "http://127.0.0.1:8080/healthz"]
 USER triplet:triplet
 ENTRYPOINT ["/usr/local/bin/triplet"]
 CMD ["-config", "/etc/triplet/config.yaml"]

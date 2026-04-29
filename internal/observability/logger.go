@@ -4,6 +4,7 @@ package observability
 import (
 	"context"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -64,10 +65,15 @@ func LoggingMiddleware(logger *slog.Logger) func(http.Handler) http.Handler {
 			ctx := context.WithValue(r.Context(), requestIDKey, rid)
 			ww := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 			next.ServeHTTP(ww, r.WithContext(ctx))
+			if r.URL.Path == "/healthz" {
+				return
+			}
 			logger.LogAttrs(ctx, slog.LevelInfo, "http",
 				slog.String("request_id", rid),
 				slog.String("method", r.Method),
 				slog.String("path", redact.Path(r.URL.Path)),
+				slog.String("client_ip", clientIP(r)),
+				slog.String("user_agent", r.UserAgent()),
 				slog.Int("status", ww.status),
 				slog.Int64("bytes", ww.bytes),
 				slog.Duration("latency", time.Since(start)),
@@ -110,6 +116,22 @@ func (s *statusRecorder) Write(b []byte) (int, error) {
 	n, err := s.ResponseWriter.Write(b)
 	s.bytes += int64(n)
 	return n, err
+}
+
+func clientIP(r *http.Request) string {
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		ip, _, _ := strings.Cut(xff, ",")
+		if ip = strings.TrimSpace(ip); ip != "" {
+			return ip
+		}
+	}
+	if ip := strings.TrimSpace(r.Header.Get("X-Real-IP")); ip != "" {
+		return ip
+	}
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		return host
+	}
+	return r.RemoteAddr
 }
 
 func newRequestID() string {

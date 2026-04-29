@@ -37,10 +37,12 @@ type HTTPOpener struct {
 	ForwardAuthHeaders bool
 }
 
+const DefaultRequestTimeout = 2 * time.Minute
+
 // NewHTTPOpener constructs an HTTPOpener with sane timeouts.
 func NewHTTPOpener(allowedHosts []string, requestTimeout time.Duration, maxBytes int64) *HTTPOpener {
 	if requestTimeout == 0 {
-		requestTimeout = 30 * time.Second
+		requestTimeout = DefaultRequestTimeout
 	}
 	h := &HTTPOpener{
 		AllowedHosts: allowedHosts,

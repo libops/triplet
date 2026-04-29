@@ -37,6 +37,11 @@ type Server struct {
 	PublicBaseURL string        `yaml:"public_base_url"`
 }
 
+const (
+	DefaultServerReadTimeout  = 60 * time.Second
+	DefaultServerWriteTimeout = 5 * time.Minute
+)
+
 // Logging controls slog setup.
 type Logging struct {
 	Level  string `yaml:"level"`
@@ -252,10 +257,10 @@ func (c *Config) applyDefaults() {
 		c.Server.Listen = ":8080"
 	}
 	if c.Server.ReadTimeout == 0 {
-		c.Server.ReadTimeout = 30 * time.Second
+		c.Server.ReadTimeout = DefaultServerReadTimeout
 	}
 	if c.Server.WriteTimeout == 0 {
-		c.Server.WriteTimeout = 120 * time.Second
+		c.Server.WriteTimeout = DefaultServerWriteTimeout
 	}
 	if c.Logging.Level == "" {
 		c.Logging.Level = "info"
