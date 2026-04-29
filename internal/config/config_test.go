@@ -491,6 +491,12 @@ sources:
 	if c.Server.Listen != ":8080" {
 		t.Errorf("Listen default = %q", c.Server.Listen)
 	}
+	if c.Server.ReadTimeout != DefaultServerReadTimeout {
+		t.Errorf("ReadTimeout default = %s", c.Server.ReadTimeout)
+	}
+	if c.Server.WriteTimeout != DefaultServerWriteTimeout {
+		t.Errorf("WriteTimeout default = %s", c.Server.WriteTimeout)
+	}
 	if c.IIIF.Image.Prefix != "/iiif/3" {
 		t.Errorf("Image.Prefix default = %q", c.IIIF.Image.Prefix)
 	}

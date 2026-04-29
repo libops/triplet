@@ -51,7 +51,7 @@ sources:
   # http:
   #   allowed_hosts: [images.example.org]
   #   allow_private_hosts: false
-  #   request_timeout: 30s
+  #   request_timeout: 2m
   #   max_bytes: 52428800
 
 cache:

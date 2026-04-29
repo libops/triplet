@@ -5,8 +5,8 @@
 server:
   # Address the HTTP server binds to.
   listen: ":8080"
-  read_timeout: 30s
-  write_timeout: 120s
+  read_timeout: 60s
+  write_timeout: 5m
   # Public base URL the server is reachable at. Used to build canonical
   # `id` fields in info.json and Link headers. Required.
   public_base_url: "${TRIPLET_PUBLIC_BASE_URL}"
@@ -155,7 +155,7 @@ sources:
   # http:
   #   allowed_hosts: [islandora-stage.lib.lehigh.edu]
   #   allow_private_hosts: false
-  #   request_timeout: 30s
+  #   request_timeout: 2m
   #   max_bytes: 52428800
   # gcs:
   #   bucket_url: gs://my-bucket

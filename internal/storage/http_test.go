@@ -100,6 +100,13 @@ func TestHTTPOpener(t *testing.T) {
 	})
 }
 
+func TestHTTPOpenerAppliesDefaultRequestTimeout(t *testing.T) {
+	op := NewHTTPOpener([]string{"example.org"}, 0, 0)
+	if op.Client.Timeout != DefaultRequestTimeout {
+		t.Fatalf("Client.Timeout = %s, want %s", op.Client.Timeout, DefaultRequestTimeout)
+	}
+}
+
 func TestHTTPOpenerRejectsRedirectToDeniedHost(t *testing.T) {
 	redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "http://example.org/secret", http.StatusFound)
