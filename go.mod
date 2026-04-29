@@ -69,4 +69,4 @@ require (
 	google.golang.org/protobuf v1.36.11 // indirect
 )
 
-replace github.com/davidbyttow/govips/v2 => github.com/libops/govips/v2 v2.0.0-20260429085721-cd3833ca24a5
+replace github.com/davidbyttow/govips/v2 => github.com/libops/govips/v2 v2.0.0-20260429094915-ee9c36250135

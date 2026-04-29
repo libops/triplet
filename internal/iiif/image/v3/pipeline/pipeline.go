@@ -109,7 +109,7 @@ func (p *Pipeline) Transform(ctx context.Context, req parse.Request, w io.Writer
 
 	params := gv.NewImportParams()
 	params.Access.Set(p.loadAccess(req))
-	img, err := gv.LoadImageFromFile(source.Path, params)
+	img, err := gv.LoadImageFromFileDirect(source.Path, params)
 	if err != nil {
 		return Result{}, tvips.Wrap("govips load", err)
 	}
@@ -142,7 +142,7 @@ func (p *Pipeline) Transform(ctx context.Context, req parse.Request, w io.Writer
 		params := gv.NewImportParams()
 		params.Access.Set(p.loadAccess(req))
 		params.Page.Set(page)
-		img, err = gv.LoadImageFromFile(source.Path, params)
+		img, err = gv.LoadImageFromFileDirect(source.Path, params)
 		if err != nil {
 			return Result{}, tvips.Wrap("govips jp2kload page", err)
 		}

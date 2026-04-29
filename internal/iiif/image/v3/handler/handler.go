@@ -340,21 +340,9 @@ func (h *Handler) imageDimensions(ctx context.Context, identifier string) (int, 
 	}
 	params := gv.NewImportParams()
 	params.Access.Set(gv.AccessSequential)
-	img, err := gv.LoadImageFromFile(path, params)
+	img, err := gv.LoadImageFromFileDirect(path, params)
 	if err != nil {
-		h.logger.Warn("read image dimensions sequential load failed",
-			"identifier", redact.Identifier(identifier),
-			"identifier_hash", redact.Hash(identifier),
-			"path", path,
-			"source_size", meta.Size,
-			"source_mod_time", meta.ModTime,
-			"source_content_type", meta.ContentType,
-			"err", err,
-		)
-		img, err = gv.LoadImageFromFile(path, nil)
-		if err != nil {
-			return 0, 0, fmt.Errorf("vips load %q size=%d content_type=%q mod_time=%s: %w", path, meta.Size, meta.ContentType, meta.ModTime.Format(time.RFC3339Nano), err)
-		}
+		return 0, 0, fmt.Errorf("vips load %q size=%d content_type=%q mod_time=%s: %w", path, meta.Size, meta.ContentType, meta.ModTime.Format(time.RFC3339Nano), err)
 	}
 	defer img.Close()
 	width, height := img.Width(), img.Height()
