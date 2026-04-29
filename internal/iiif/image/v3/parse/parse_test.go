@@ -38,6 +38,64 @@ func TestParseRouting(t *testing.T) {
 	}
 }
 
+func TestParseImageUnescapesOperationSegments(t *testing.T) {
+	tests := []struct {
+		path string
+		want Request
+	}{
+		{
+			path: "abc/full/%5E1024,/0/default.jpg",
+			want: Request{
+				Kind:       KindImage,
+				Identifier: "abc",
+				Region:     Region{Kind: RegionFull},
+				Size:       Size{Kind: SizeWidth, W: 1024, Upscale: true},
+				Quality:    QualityDefault,
+				Format:     FormatJPG,
+			},
+		},
+		{
+			path: "abc/square/%5E512,512/0/default.jpg",
+			want: Request{
+				Kind:       KindImage,
+				Identifier: "abc",
+				Region:     Region{Kind: RegionSquare},
+				Size:       Size{Kind: SizeWH, W: 512, H: 512, Upscale: true},
+				Quality:    QualityDefault,
+				Format:     FormatJPG,
+			},
+		},
+		{
+			path: "abc/pct%3A10,10,50,50/%5E%21512,512/0/default.jpg",
+			want: Request{
+				Kind:       KindImage,
+				Identifier: "abc",
+				Region:     Region{Kind: RegionPercent, X: 10, Y: 10, W: 50, H: 50},
+				Size:       Size{Kind: SizeBestFit, W: 512, H: 512, Upscale: true},
+				Quality:    QualityDefault,
+				Format:     FormatJPG,
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.path, func(t *testing.T) {
+			got, err := Parse(tc.path)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("got %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestParseImageRejectsEscapedSlashInOperationSegment(t *testing.T) {
+	if _, err := Parse("abc/full/512%2F512/0/default.jpg"); !errors.Is(err, ErrSyntax) {
+		t.Fatalf("err = %v, want ErrSyntax", err)
+	}
+}
+
 func TestParseRoutingError(t *testing.T) {
 	for _, p := range []string{"", "/", "abc/garbage", "a/b/c/d", "a/b/c/d/e/f"} {
 		t.Run(p, func(t *testing.T) {

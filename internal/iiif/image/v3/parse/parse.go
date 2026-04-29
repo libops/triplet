@@ -173,6 +173,12 @@ func parseImage(parts []string) (Request, error) {
 		return Request{}, err
 	}
 	tail := parts[len(parts)-4:]
+	for i, part := range tail {
+		tail[i], err = decodeOperationSegment(part)
+		if err != nil {
+			return Request{}, err
+		}
+	}
 	region, err := parseRegion(tail[0])
 	if err != nil {
 		return Request{}, err
@@ -207,6 +213,17 @@ func parseImage(parts []string) (Request, error) {
 		Quality:    quality,
 		Format:     format,
 	}, nil
+}
+
+func decodeOperationSegment(s string) (string, error) {
+	decoded, err := url.PathUnescape(s)
+	if err != nil {
+		return "", fmt.Errorf("%w: operation segment: %v", ErrSyntax, err)
+	}
+	if strings.ContainsAny(decoded, "\x00\n\r/") {
+		return "", fmt.Errorf("%w: operation segment contains illegal character", ErrSyntax)
+	}
+	return decoded, nil
 }
 
 func decodeIdentifier(s string) (string, error) {
