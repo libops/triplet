@@ -44,15 +44,26 @@ markdown_extensions:
       repo_url_shorthand: true
       user: libops
       repo: triplet
-  - pymdownx.superfences
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format ""
   - pymdownx.tabbed:
       alternate_style: true
   - pymdownx.tasklist:
       custom_checkbox: true
 
+extra_css:
+  - css/custom.css
+
+extra_javascript:
+  - js/mermaid-init.mjs
+
 nav:
   - Home: index.md
   - Configuration: configuration.md
+  - Authorization: authorization.md
   - Caching: caching.md
   - Format support: formats.md
   - libvips build: libvips.md

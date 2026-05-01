@@ -32,6 +32,7 @@ iiif:
 ## Documentation
 
 - [Configuration](configuration.md) covers the YAML configuration surface.
+- [Authorization](authorization.md) explains authentication controls, source authorization, and HTTP source boundaries.
 - [Caching](caching.md) explains Triplet's cache layers and invalidation behavior.
 - [Format support](formats.md) lists source and response formats.
 - [libvips build](libvips.md) documents the runtime image feature surface.

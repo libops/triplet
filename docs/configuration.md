@@ -62,10 +62,11 @@ iiif:
     prefix: /auth/v2
 ```
 
-## Image limits
+## Image safety limits
 
 These limits bound libvips request work and protect public deployments from
-oversized source images or derivatives.
+oversized source images, oversized decoded outputs, and unexpectedly large
+encoded responses.
 
 ```yaml
 iiif:
@@ -75,13 +76,72 @@ iiif:
     max_source_pixels: 250000000
     max_source_bytes: 1073741824
     max_derivative_bytes: 536870912
+```
+
+`max_output_pixels` is the decoded derivative size limit after the IIIF region,
+size, and rotation parameters are applied. It is cheap protection against
+requests that expand a source into a very large output. The default is
+100,000,000 pixels. Setting it to `0` is only accepted when
+`allow_unsafe_unlimited_output_pixels: true`; do not enable unlimited output
+pixels for public HTTP deployments.
+
+`max_source_pixels` rejects sources whose decoded width multiplied by height is
+too large before Triplet transforms them. The default is 250,000,000 pixels.
+`max_source_bytes` applies while Triplet is reading an encoded source that is
+not already available as a local file path. `max_derivative_bytes` applies after
+export and prevents returning very large encoded derivatives. Both byte limits
+default to the values shown above.
+
+## Image processing
+
+These settings tune how much image work Triplet runs concurrently and how
+libvips reads and color-manages source images.
+
+```yaml
+iiif:
+  image:
     max_concurrent_transforms: 4
-    max_width: 0
-    max_height: 0
     color_management: preserve
     load_access: auto
-    info_dimension_cache: true
 ```
+
+`max_concurrent_transforms` bounds concurrent libvips jobs across image
+derivatives and `info.json` probes. When omitted, Triplet uses the smaller of
+`GOMAXPROCS` and 4, with a minimum of 1.
+
+`color_management` controls whether Triplet preserves the source image's color
+profile or normalizes pixels before encoding the derivative:
+
+| Value | Behavior | Implications |
+|---|---|---|
+| `preserve` | Default. Leaves the image in its current color space and keeps embedded metadata and ICC profiles where the output codec supports them. | Best match for preservation-oriented repositories and common Cantaloupe behavior. It avoids extra color conversion work and keeps profile information available to color-managed viewers, but clients that ignore embedded profiles may display wide-gamut, CMYK, or otherwise non-sRGB material differently. |
+| `normalize` | Optimizes the embedded ICC profile, then converts supported non-sRGB color images to sRGB. Grayscale images remain grayscale. Exported derivatives strip metadata where the codec supports stripping. | Best for web-oriented delivery when predictable browser display is more important than retaining source profiles. It can change pixel values by design, adds conversion cost, and may remove metadata/profiles from derivatives. |
+| `none` | Does not convert color space and asks the encoder to strip metadata where supported. | Best when derivatives should avoid metadata/profile retention but you do not want Triplet to alter pixel values through color conversion. Non-sRGB images remain non-sRGB, so display still depends on client interpretation. |
+
+`load_access: auto` uses random access for region crops and sequential access for
+full-image or resize requests.
+
+## Advertised image limits
+
+These fields do not enforce additional server-side work limits. They advertise
+client-facing size limits in Image API `info.json` so viewers can avoid sending
+requests Triplet does not want to serve.
+
+```yaml
+iiif:
+  image:
+    max_width: 0
+    max_height: 0
+```
+
+`0` omits the corresponding field from `info.json`.
+
+## Caching
+
+Cache-related settings, including derivative caches, source caches,
+`info_dimension_cache`, and libvips operation caches are covered in
+[Caching](caching.md). Local URL auth-probe TTLs are covered in
+[Authorization](authorization.md).
 
 ## Source selection
 
@@ -126,10 +186,6 @@ sources:
       - prefix: /system/files
         root: /private
         auth_probe: true
-        auth_anonymous_cache_ttl: 720h
-        auth_authenticated_cache_ttl: 168h
-        auth_error_cache_min_age: 5m
-        auth_cache_max_entries: 4096
       - prefix: /fedora
         root: /fcrepo
         ocfl: true
@@ -138,27 +194,13 @@ sources:
 
 For protected paths, `auth_probe: true` asks the original Drupal URL for
 authorization before serving the local file. Anonymous and credentialed probe
-results are cached separately for short, configurable TTLs.
-
-Negative auth-probe caching is intentionally conservative: Triplet does not
-cache 5xx results, and it skips 403 or 404 cache writes when the probe response
-says the object was modified within `auth_error_cache_min_age`.
+results are cached separately; see [Authorization](authorization.md) for
+TTL behavior and invalidation.
 
 ## HTTP source boundary
 
 When using HTTP identifiers, Triplet treats the identifier as a source URL and
 fetches it before passing bytes to libvips.
-
-The HTTP host allowlist prevents arbitrary URL fetches, constrains redirect
-targets, and keeps the native image parser surface limited to trusted
-repositories. Keep `sources.http.allowed_origins` to the exact upstream origins
-Triplet is allowed to fetch, including scheme and port when needed.
-
-An empty list denies all HTTP sources and wildcards are rejected. Private,
-loopback, link-local, and metadata addresses are blocked unless
-`sources.http.allow_private_hosts` is explicitly enabled. When private hosts are
-blocked, Triplet resolves the hostname once and connects only to a verified
-public IP, so DNS rebinding cannot swap the connection target after validation.
 
 ```yaml
 sources:
@@ -169,3 +211,7 @@ sources:
     request_timeout: 2m
     max_bytes: 52428800
 ```
+
+The HTTP host allowlist is a source-fetch boundary. See
+[Authorization](authorization.md#source-fetch-boundary) for origin, redirect,
+private host, and DNS rebinding behavior.

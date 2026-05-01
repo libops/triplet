@@ -31,6 +31,12 @@ iiif:
     load_access: auto
 ```
 
+`color_management: preserve` is the default and leaves source profiles attached
+where the output codec supports them. `normalize` uses LCMS to convert supported
+non-sRGB color images to sRGB and strips export metadata; `none` skips color
+conversion while still stripping export metadata where supported. See
+[Configuration](configuration.md#image-processing) for the operator tradeoffs.
+
 ## Enabled
 
 | Option | What it enables | libvips implication |
