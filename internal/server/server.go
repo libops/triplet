@@ -338,6 +338,7 @@ func buildLocalURLMappings(cfg *config.Config, fileOp storage.Opener) ([]storage
 			AuthCacheTTL:              mapping.AuthCacheTTL,
 			AuthAnonymousCacheTTL:     mapping.AuthAnonymousCacheTTL,
 			AuthAuthenticatedCacheTTL: mapping.AuthAuthenticatedCacheTTL,
+			AuthErrorCacheMinAge:      mapping.AuthErrorCacheMinAge,
 			AuthCacheMaxEntries:       mapping.AuthCacheMaxEntries,
 		})
 	}

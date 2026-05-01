@@ -616,6 +616,84 @@ func TestLocalURLFallbackAuthProbeAnonymousSucceedsAndCaches(t *testing.T) {
 	}
 }
 
+func TestLocalURLFallbackAuthProbeDoesNotCacheRecentError(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "private.jp2"), []byte("private"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var probes atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		probes.Add(1)
+		w.Header().Set("Last-Modified", time.Now().UTC().Format(http.TimeFormat))
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer srv.Close()
+	fileOp, err := NewFileOpener(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	op := &LocalURLFallback{
+		Mappings: []LocalURLMapping{{
+			Prefix:               srv.URL + "/system/files",
+			File:                 fileOp,
+			AuthProbe:            true,
+			AuthCacheTTL:         time.Minute,
+			AuthErrorCacheMinAge: time.Hour,
+		}},
+		Fallback:     errOpener{},
+		AuthFallback: testAuthHTTP(t, srv),
+	}
+
+	for i := 0; i < 2; i++ {
+		_, _, err := op.Open(context.Background(), srv.URL+"/system/files/private.jp2")
+		if !errors.Is(err, ErrForbidden) {
+			t.Fatalf("err = %v", err)
+		}
+	}
+	if got := probes.Load(); got != 2 {
+		t.Fatalf("probes = %d", got)
+	}
+}
+
+func TestLocalURLFallbackAuthProbeCachesOldError(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "private.jp2"), []byte("private"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var probes atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		probes.Add(1)
+		w.Header().Set("Last-Modified", time.Now().Add(-2*time.Hour).UTC().Format(http.TimeFormat))
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer srv.Close()
+	fileOp, err := NewFileOpener(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	op := &LocalURLFallback{
+		Mappings: []LocalURLMapping{{
+			Prefix:               srv.URL + "/system/files",
+			File:                 fileOp,
+			AuthProbe:            true,
+			AuthCacheTTL:         time.Minute,
+			AuthErrorCacheMinAge: time.Hour,
+		}},
+		Fallback:     errOpener{},
+		AuthFallback: testAuthHTTP(t, srv),
+	}
+
+	for i := 0; i < 2; i++ {
+		_, _, err := op.Open(context.Background(), srv.URL+"/system/files/private.jp2")
+		if !errors.Is(err, ErrForbidden) {
+			t.Fatalf("err = %v", err)
+		}
+	}
+	if got := probes.Load(); got != 1 {
+		t.Fatalf("probes = %d", got)
+	}
+}
+
 func TestLocalURLFallbackAuthProbeFallsBackToCredentialedCache(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "private.jp2"), []byte("private"), 0o600); err != nil {

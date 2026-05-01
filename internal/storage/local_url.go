@@ -51,6 +51,7 @@ type LocalURLMapping struct {
 	AuthCacheTTL              time.Duration
 	AuthAnonymousCacheTTL     time.Duration
 	AuthAuthenticatedCacheTTL time.Duration
+	AuthErrorCacheMinAge      time.Duration
 	AuthCacheMaxEntries       int
 }
 
@@ -69,6 +70,7 @@ const (
 	authCacheTierAuthenticated  authCacheTier = "authenticated"
 	defaultAnonymousAuthTTL                   = 5 * time.Minute
 	defaultAuthenticatedAuthTTL               = 5 * time.Minute
+	defaultAuthErrorCacheMinAge               = 5 * time.Minute
 	defaultAuthCacheMaxEntries                = 4096
 )
 
@@ -319,7 +321,7 @@ func (l *LocalURLFallback) authorize(ctx context.Context, identifier string, map
 		}
 		return l.authorizeAuthenticated(ctx, identifier, mapping, headers)
 	}
-	anonErr := l.probeCached(ctx, anonKey, identifier, nil, mapping.anonymousAuthTTL(), mapping.authCacheMaxEntries())
+	anonErr := l.probeCached(ctx, anonKey, identifier, nil, mapping.anonymousAuthTTL(), mapping.authErrorCacheMinAge(), mapping.authCacheMaxEntries())
 	if anonErr == nil || !hasAuthHeaders(headers) {
 		return anonErr
 	}
@@ -334,10 +336,10 @@ func (l *LocalURLFallback) authorizeAuthenticated(ctx context.Context, identifie
 	if err, ok := l.cachedAuth(key); ok {
 		return err
 	}
-	return l.probeCached(ctx, key, identifier, headers, mapping.authenticatedAuthTTL(), mapping.authCacheMaxEntries())
+	return l.probeCached(ctx, key, identifier, headers, mapping.authenticatedAuthTTL(), mapping.authErrorCacheMinAge(), mapping.authCacheMaxEntries())
 }
 
-func (l *LocalURLFallback) probeCached(ctx context.Context, key, identifier string, headers http.Header, ttl time.Duration, maxEntries int) error {
+func (l *LocalURLFallback) probeCached(ctx context.Context, key, identifier string, headers http.Header, ttl, errorMinAge time.Duration, maxEntries int) error {
 	if wait, ok := l.beginAuthProbe(key); ok {
 		l.debug(ctx, "local url auth probe waiting on in-flight probe", identifier, "cache_key", redact.Hash(key))
 		select {
@@ -348,9 +350,10 @@ func (l *LocalURLFallback) probeCached(ctx context.Context, key, identifier stri
 			return ctx.Err()
 		}
 	}
-	err := l.probe(ctx, identifier, headers)
-	l.debug(ctx, "local url auth probe completed", identifier, "cache_key", redact.Hash(key), "cacheable", cacheableAuthProbeResult(err), "ttl", ttl.String(), "err", err)
-	if ttl > 0 && cacheableAuthProbeResult(err) {
+	respHeader, err := l.probe(ctx, identifier, headers)
+	cacheable := cacheableAuthProbeResult(err) && cacheableAuthProbeResponse(err, respHeader, errorMinAge, time.Now())
+	l.debug(ctx, "local url auth probe completed", identifier, "cache_key", redact.Hash(key), "cacheable", cacheable, "ttl", ttl.String(), "err", err)
+	if ttl > 0 && cacheable {
 		l.storeAuth(key, authCacheScope(key), err, ttl, maxEntries)
 	}
 	l.finishAuthProbe(key, err)
@@ -394,6 +397,17 @@ func cacheableAuthProbeResult(err error) bool {
 	return err == nil || errors.Is(err, ErrForbidden) || errors.Is(err, ErrNotFound)
 }
 
+func cacheableAuthProbeResponse(err error, header http.Header, errorMinAge time.Duration, now time.Time) bool {
+	if err == nil || (!errors.Is(err, ErrForbidden) && !errors.Is(err, ErrNotFound)) || errorMinAge <= 0 {
+		return true
+	}
+	modified, parseErr := http.ParseTime(header.Get("Last-Modified"))
+	if parseErr != nil {
+		return true
+	}
+	return !modified.After(now.Add(-errorMinAge))
+}
+
 func (m LocalURLMapping) anonymousAuthTTL() time.Duration {
 	if m.AuthAnonymousCacheTTL > 0 {
 		return m.AuthAnonymousCacheTTL
@@ -412,6 +426,13 @@ func (m LocalURLMapping) authenticatedAuthTTL() time.Duration {
 		return m.AuthCacheTTL
 	}
 	return defaultAuthenticatedAuthTTL
+}
+
+func (m LocalURLMapping) authErrorCacheMinAge() time.Duration {
+	if m.AuthErrorCacheMinAge > 0 {
+		return m.AuthErrorCacheMinAge
+	}
+	return defaultAuthErrorCacheMinAge
 }
 
 func (m LocalURLMapping) authCacheMaxEntries() int {
@@ -509,26 +530,27 @@ func (l *LocalURLFallback) finishAuthProbe(key string, err error) {
 	}
 }
 
-func (l *LocalURLFallback) probe(ctx context.Context, identifier string, headers http.Header) error {
-	if err := l.probeRequest(ctx, http.MethodHead, identifier, headers); err == nil || !errors.Is(err, errAuthProbeHeadUnsupported) {
-		return err
+func (l *LocalURLFallback) probe(ctx context.Context, identifier string, headers http.Header) (http.Header, error) {
+	respHeader, err := l.probeRequest(ctx, http.MethodHead, identifier, headers)
+	if err == nil || !errors.Is(err, errAuthProbeHeadUnsupported) {
+		return respHeader, err
 	}
 	return l.probeRequest(ctx, http.MethodGet, identifier, headers)
 }
 
-func (l *LocalURLFallback) probeRequest(ctx context.Context, method, identifier string, headers http.Header) error {
+func (l *LocalURLFallback) probeRequest(ctx context.Context, method, identifier string, headers http.Header) (http.Header, error) {
 	prober := l.AuthFallback
 	if prober == nil {
-		return fmt.Errorf("auth probe: authenticated HTTP fallback is required")
+		return nil, fmt.Errorf("auth probe: authenticated HTTP fallback is required")
 	}
 	target, err := prober.parseTarget(identifier)
 	if err != nil {
 		l.debug(ctx, "local url auth probe target rejected", identifier, "method", method, "err", err)
-		return err
+		return nil, err
 	}
 	req, err := http.NewRequestWithContext(ctx, method, target.String(), nil)
 	if err != nil {
-		return fmt.Errorf("auth probe: %w", err)
+		return nil, fmt.Errorf("auth probe: %w", err)
 	}
 	for _, name := range []string{"Authorization", "Cookie"} {
 		for _, value := range headers.Values(name) {
@@ -543,23 +565,23 @@ func (l *LocalURLFallback) probeRequest(ctx context.Context, method, identifier 
 	resp, err := prober.client().Do(req)
 	if err != nil {
 		l.debug(ctx, "local url auth probe request error", identifier, "method", method, "url", target.Redacted(), "err", err)
-		return fmt.Errorf("auth probe %q: %w", identifier, err)
+		return nil, fmt.Errorf("auth probe %q: %w", identifier, err)
 	}
 	defer resp.Body.Close()
 	l.debug(ctx, "local url auth probe response", identifier, "method", method, "url", target.Redacted(), "status", resp.StatusCode)
 	switch resp.StatusCode {
 	case http.StatusOK, http.StatusPartialContent:
-		return nil
+		return resp.Header, nil
 	case http.StatusNotFound:
-		return fmt.Errorf("%w: auth probe 404", ErrNotFound)
+		return resp.Header, fmt.Errorf("%w: auth probe 404", ErrNotFound)
 	case http.StatusUnauthorized, http.StatusForbidden:
-		return fmt.Errorf("%w: auth probe status %d", ErrForbidden, resp.StatusCode)
+		return resp.Header, fmt.Errorf("%w: auth probe status %d", ErrForbidden, resp.StatusCode)
 	case http.StatusMethodNotAllowed, http.StatusNotImplemented:
 		if method == http.MethodHead {
-			return errAuthProbeHeadUnsupported
+			return resp.Header, errAuthProbeHeadUnsupported
 		}
 	}
-	return fmt.Errorf("auth probe %q: upstream status %d", identifier, resp.StatusCode)
+	return resp.Header, fmt.Errorf("auth probe %q: upstream status %d", identifier, resp.StatusCode)
 }
 
 func (l *LocalURLFallback) debug(ctx context.Context, msg, identifier string, args ...any) {

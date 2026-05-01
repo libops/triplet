@@ -129,6 +129,7 @@ sources:
         auth_probe: true
         auth_anonymous_cache_ttl: 720h
         auth_authenticated_cache_ttl: 168h
+        auth_error_cache_min_age: 5m
         auth_cache_max_entries: 4096
   http:
     allowed_hosts: [repo.example.edu]
@@ -184,6 +185,24 @@ sources:
     allowed_hosts: [repo.example.edu]
 `,
 			wantErr: "sources.file.url_mappings[0].auth_authenticated_cache_ttl",
+		},
+		{
+			name: "file url mapping rejects negative auth error cache min age",
+			body: `
+server:
+  public_base_url: http://localhost:8080
+sources:
+  default: http
+  file:
+    url_mappings:
+      - prefix: https://repo.example.edu/system/files
+        root: /tmp
+        auth_probe: true
+        auth_error_cache_min_age: -1s
+  http:
+    allowed_hosts: [repo.example.edu]
+`,
+			wantErr: "sources.file.url_mappings[0].auth_error_cache_min_age",
 		},
 		{
 			name: "file url mapping rejects negative auth max entries",
