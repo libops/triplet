@@ -1,4 +1,4 @@
-.PHONY: build test test-integration test-race test-asan install-tools conformance benchmark-fixtures benchmark-iiif lint generate fmt docker clean
+.PHONY: build test test-integration test-race test-asan install-tools conformance benchmark-fixtures benchmark-iiif benchmark-iiif-pr lint generate fmt docker clean
 
 BIN ?= bin/triplet
 PKG ?= ./...
@@ -29,6 +29,9 @@ benchmark-fixtures:
 
 benchmark-iiif:
 	/bin/bash ./scripts/benchmark-iiif.sh
+
+benchmark-iiif-pr:
+	/bin/bash ./scripts/benchmark-iiif-pr.sh
 
 lint:
 	golangci-lint run $(PKG)
