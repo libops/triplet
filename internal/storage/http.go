@@ -353,15 +353,37 @@ func httpMeta(header http.Header, size int64) Meta {
 }
 
 func parseContentRangeSize(v string) (int64, bool) {
-	slash := strings.LastIndexByte(v, '/')
-	if slash < 0 || slash == len(v)-1 {
-		return 0, false
+	_, _, size, ok := parseContentRange(v)
+	return size, ok
+}
+
+func parseContentRange(v string) (start, end, size int64, ok bool) {
+	v = strings.TrimSpace(v)
+	if !strings.HasPrefix(v, "bytes ") {
+		return 0, 0, 0, false
 	}
-	if v[slash+1:] == "*" {
-		return 0, false
+	spec := strings.TrimSpace(strings.TrimPrefix(v, "bytes "))
+	rangePart, sizePart, found := strings.Cut(spec, "/")
+	if !found || sizePart == "" || sizePart == "*" {
+		return 0, 0, 0, false
 	}
-	n, err := strconv.ParseInt(v[slash+1:], 10, 64)
-	return n, err == nil && n >= 0
+	startPart, endPart, found := strings.Cut(rangePart, "-")
+	if !found || startPart == "" || endPart == "" {
+		return 0, 0, 0, false
+	}
+	start, err := strconv.ParseInt(startPart, 10, 64)
+	if err != nil || start < 0 {
+		return 0, 0, 0, false
+	}
+	end, err = strconv.ParseInt(endPart, 10, 64)
+	if err != nil || end < start {
+		return 0, 0, 0, false
+	}
+	size, err = strconv.ParseInt(sizePart, 10, 64)
+	if err != nil || size < 0 || end >= size {
+		return 0, 0, 0, false
+	}
+	return start, end, size, true
 }
 
 func (h *HTTPOpener) originAllowed(u *url.URL) bool {
@@ -499,6 +521,10 @@ func (r *httpRangeReadSeekCloser) Read(p []byte) (int, error) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusPartialContent {
 		return 0, fmt.Errorf("http range reader: upstream status %d", resp.StatusCode)
+	}
+	rangeStart, rangeEnd, rangeSize, ok := parseContentRange(resp.Header.Get("Content-Range"))
+	if !ok || rangeStart != r.off || rangeEnd != end || rangeSize != r.size {
+		return 0, fmt.Errorf("http range reader: invalid content-range %q for bytes=%d-%d/%d", resp.Header.Get("Content-Range"), r.off, end, r.size)
 	}
 	n, err := io.ReadFull(resp.Body, p)
 	r.off += int64(n)

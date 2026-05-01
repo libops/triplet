@@ -32,6 +32,10 @@ import (
 // fulfilled because their resolved parameters violate the Image API rules.
 var ErrBadRequest = errors.New("pipeline: bad request")
 
+// ErrUnsupportedSource marks source bytes that libvips cannot decode as one of
+// Triplet's supported input image formats.
+var ErrUnsupportedSource = errors.New("pipeline: unsupported source image")
+
 // Limits caps resource use per request.
 type Limits struct {
 	// MaxOutputPixels rejects requests whose computed output exceeds this
@@ -111,7 +115,7 @@ func (p *Pipeline) Transform(ctx context.Context, req parse.Request, w io.Writer
 	params.Access.Set(p.loadAccess(req))
 	img, err := gv.LoadImageFromFileDirect(source.Path, params)
 	if err != nil {
-		return Result{}, tvips.Wrap("govips load", err)
+		return Result{}, WrapSourceLoadError("govips load", err)
 	}
 	defer func() {
 		if img != nil {
@@ -144,7 +148,7 @@ func (p *Pipeline) Transform(ctx context.Context, req parse.Request, w io.Writer
 		params.Page.Set(page)
 		img, err = gv.LoadImageFromFileDirect(source.Path, params)
 		if err != nil {
-			return Result{}, tvips.Wrap("govips jp2kload page", err)
+			return Result{}, WrapSourceLoadError("govips jp2kload page", err)
 		}
 		left, top, regionW, regionH = scaleRegionToLoadedPage(left, top, regionW, regionH, dims.width, dims.height, img.Width(), img.Height())
 	}
@@ -273,6 +277,25 @@ func (p *Pipeline) openSource(ctx context.Context, identifier string) (*sourceFi
 		meta.Size = n
 	}
 	return &sourceFile{Path: tmpPath, Meta: meta, tmpPath: tmpPath}, nil
+}
+
+// WrapSourceLoadError preserves libvips load details while marking errors that
+// mean the source is not a decodable supported image.
+func WrapSourceLoadError(op string, err error) error {
+	if err == nil {
+		return nil
+	}
+	if isUnsupportedSourceLoad(err) {
+		return fmt.Errorf("%w: vips %s: %w", ErrUnsupportedSource, op, err)
+	}
+	return tvips.Wrap(op, err)
+}
+
+func isUnsupportedSourceLoad(err error) bool {
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "is not a known file format") ||
+		strings.Contains(msg, "no known loader") ||
+		strings.Contains(msg, "operation class") && strings.Contains(msg, "is blocked")
 }
 
 func applyColorManagement(img *gv.ImageRef, mode string) error {

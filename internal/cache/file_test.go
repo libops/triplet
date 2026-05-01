@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -51,6 +52,31 @@ func TestFileStorePutGetDelete(t *testing.T) {
 	_, _, err = store.Get(context.Background(), "abc")
 	if !errors.Is(err, ErrMiss) {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestFileStoreMissDoesNotCreateKeyDirectory(t *testing.T) {
+	root := t.TempDir()
+	store, err := NewFileStore(root, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dataPath, _ := store.paths("missing")
+	dir := filepath.Dir(dataPath)
+
+	_, _, err = store.Get(context.Background(), "missing")
+	if !errors.Is(err, ErrMiss) {
+		t.Fatalf("err = %v, want miss", err)
+	}
+	if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("dir stat err = %v, want not exist", err)
+	}
+
+	if err := store.Delete(context.Background(), "missing"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("dir stat after delete err = %v, want not exist", err)
 	}
 }
 
