@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"strings"
 	"testing"
@@ -29,7 +30,7 @@ func TestHTTPOpener(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	op := NewHTTPOpener([]string{"127.0.0.1", "localhost"}, 5*time.Second, 0)
+	op := NewHTTPOpener([]string{srv.URL}, 5*time.Second, 0)
 	op.AllowPrivateHosts = true
 
 	t.Run("found", func(t *testing.T) {
@@ -77,21 +78,38 @@ func TestHTTPOpener(t *testing.T) {
 	})
 
 	t.Run("host denied", func(t *testing.T) {
-		denied := NewHTTPOpener([]string{"example.org"}, 5*time.Second, 0)
+		denied := NewHTTPOpener([]string{"https://example.org"}, 5*time.Second, 0)
 		_, _, err := denied.Open(context.Background(), srv.URL+"/ok")
 		if !errors.Is(err, ErrNotFound) {
 			t.Fatalf("err = %v", err)
 		}
 	})
 
-	t.Run("host allow-list ignores case", func(t *testing.T) {
-		if !op.hostAllowed("LOCALHOST") {
-			t.Fatal("expected LOCALHOST to match localhost allow-list entry")
+	t.Run("origin port must match", func(t *testing.T) {
+		u, err := url.Parse(srv.URL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		denied := NewHTTPOpener([]string{u.Scheme + "://" + u.Hostname()}, 5*time.Second, 0)
+		denied.AllowPrivateHosts = true
+		_, _, err = denied.Open(context.Background(), srv.URL+"/ok")
+		if !errors.Is(err, ErrNotFound) {
+			t.Fatalf("err = %v", err)
+		}
+	})
+
+	t.Run("origin allow-list ignores case", func(t *testing.T) {
+		u, err := url.Parse(strings.ToUpper(srv.URL))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !op.originAllowed(u) {
+			t.Fatal("expected origin to match allow-list entry")
 		}
 	})
 
 	t.Run("max bytes", func(t *testing.T) {
-		limited := NewHTTPOpener([]string{"127.0.0.1", "localhost"}, 5*time.Second, 4)
+		limited := NewHTTPOpener([]string{srv.URL}, 5*time.Second, 4)
 		limited.AllowPrivateHosts = true
 		_, _, err := limited.Open(context.Background(), srv.URL+"/large")
 		if err == nil {
@@ -101,7 +119,7 @@ func TestHTTPOpener(t *testing.T) {
 }
 
 func TestHTTPOpenerAppliesDefaultRequestTimeout(t *testing.T) {
-	op := NewHTTPOpener([]string{"example.org"}, 0, 0)
+	op := NewHTTPOpener([]string{"https://example.org"}, 0, 0)
 	if op.Client.Timeout != DefaultRequestTimeout {
 		t.Fatalf("Client.Timeout = %s, want %s", op.Client.Timeout, DefaultRequestTimeout)
 	}
@@ -113,7 +131,7 @@ func TestHTTPOpenerRejectsRedirectToDeniedHost(t *testing.T) {
 	}))
 	defer redirector.Close()
 
-	op := NewHTTPOpener([]string{"127.0.0.1"}, 5*time.Second, 0)
+	op := NewHTTPOpener([]string{redirector.URL}, 5*time.Second, 0)
 	op.AllowPrivateHosts = true
 	_, _, err := op.Open(context.Background(), redirector.URL+"/redirect")
 	if !errors.Is(err, ErrNotFound) {
@@ -141,7 +159,7 @@ func TestHTTPOpenerUsesRangeRequests(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	op := NewHTTPOpener([]string{"127.0.0.1", "localhost"}, 5*time.Second, 0)
+	op := NewHTTPOpener([]string{srv.URL}, 5*time.Second, 0)
 	op.AllowPrivateHosts = true
 	rc, meta, err := op.Open(context.Background(), srv.URL+"/range")
 	if err != nil {
@@ -191,7 +209,7 @@ func TestHTTPOpenerMetaUsesHEAD(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	op := NewHTTPOpener([]string{"127.0.0.1", "localhost"}, 5*time.Second, 0)
+	op := NewHTTPOpener([]string{srv.URL}, 5*time.Second, 0)
 	op.AllowPrivateHosts = true
 	meta, err := op.Meta(context.Background(), srv.URL+"/image")
 	if err != nil {

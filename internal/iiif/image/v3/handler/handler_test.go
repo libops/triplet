@@ -302,7 +302,7 @@ func TestDerivativeCacheFailureWarns(t *testing.T) {
 }
 
 func TestCORSAllowedOrigin(t *testing.T) {
-	srv, _ := setupTestServerWithAllowedOrigins(t, []string{"viewer.example.edu"})
+	srv, _ := setupTestServerWithAllowedOrigins(t, []string{"https://viewer.example.edu"})
 	defer srv.Close()
 	req, err := http.NewRequest(http.MethodGet, srv.URL+"/iiif/3/sample.png/full/max/0/default.png", nil)
 	if err != nil {
@@ -347,7 +347,7 @@ func TestCORSWildcardAllowedOrigin(t *testing.T) {
 }
 
 func TestCORSDisallowedOrigin(t *testing.T) {
-	srv, _ := setupTestServerWithAllowedOrigins(t, []string{"viewer.example.edu"})
+	srv, _ := setupTestServerWithAllowedOrigins(t, []string{"https://viewer.example.edu"})
 	defer srv.Close()
 	req, err := http.NewRequest(http.MethodGet, srv.URL+"/iiif/3/sample.png/info.json", nil)
 	if err != nil {

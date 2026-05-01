@@ -7,6 +7,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"runtime"
@@ -21,6 +22,7 @@ import (
 type Config struct {
 	Server     Server     `yaml:"server"`
 	Debug      Debug      `yaml:"debug"`
+	Metrics    Metrics    `yaml:"metrics"`
 	Logging    Logging    `yaml:"logging"`
 	Vips       Vips       `yaml:"vips"`
 	IIIF       IIIF       `yaml:"iiif"`
@@ -44,14 +46,21 @@ const (
 
 // Logging controls slog setup.
 type Logging struct {
-	Level  string `yaml:"level"`
-	Format string `yaml:"format"`
+	Level             string   `yaml:"level"`
+	Format            string   `yaml:"format"`
+	TrustedProxyCIDRs []string `yaml:"trusted_proxy_cidrs"`
 }
 
 // Debug controls optional diagnostic endpoints.
 type Debug struct {
 	PprofEnabled bool   `yaml:"pprof_enabled"`
 	PprofPrefix  string `yaml:"pprof_prefix"`
+	PprofToken   string `yaml:"pprof_token"`
+}
+
+// Metrics controls Prometheus endpoint exposure.
+type Metrics struct {
+	Enabled bool `yaml:"enabled"`
 }
 
 // Vips controls libvips runtime initialization.
@@ -146,7 +155,7 @@ type FileURLMapping struct {
 
 // HTTPSource resolves identifiers that are HTTP(S) URLs.
 type HTTPSource struct {
-	AllowedHosts      []string      `yaml:"allowed_hosts"`
+	AllowedOrigins    []string      `yaml:"allowed_origins"`
 	AllowPrivateHosts bool          `yaml:"allow_private_hosts"`
 	RequestTimeout    time.Duration `yaml:"request_timeout"`
 	MaxBytes          int64         `yaml:"max_bytes"`
@@ -339,8 +348,16 @@ func (c *Config) validate() error {
 	default:
 		return fmt.Errorf("logging.format: %q not one of json|text", c.Logging.Format)
 	}
+	for _, cidr := range c.Logging.TrustedProxyCIDRs {
+		if _, _, err := net.ParseCIDR(cidr); err != nil {
+			return fmt.Errorf("logging.trusted_proxy_cidrs: invalid CIDR %q: %w", cidr, err)
+		}
+	}
 	if !strings.HasPrefix(c.Debug.PprofPrefix, "/") {
 		return fmt.Errorf("debug.pprof_prefix: must start with `/`, got %q", c.Debug.PprofPrefix)
+	}
+	if c.Debug.PprofEnabled && c.Debug.PprofToken == "" {
+		return errors.New("debug.pprof_token is required when debug.pprof_enabled = true")
 	}
 	if c.Vips.Concurrency < 0 {
 		return errors.New("vips.concurrency: must be >= 0")
@@ -424,8 +441,11 @@ func (c *Config) validate() error {
 		return errors.New("cache.source_stale_after: must be >= 0")
 	}
 	if c.Sources.HTTP != nil {
-		if len(c.Sources.HTTP.AllowedHosts) == 0 {
-			return errors.New("sources.http.allowed_hosts is required when sources.http is configured")
+		if len(c.Sources.HTTP.AllowedOrigins) == 0 {
+			return errors.New("sources.http.allowed_origins is required when sources.http is configured")
+		}
+		if err := validateHTTPSourceOrigins("sources.http.allowed_origins", c.Sources.HTTP.AllowedOrigins); err != nil {
+			return err
 		}
 		if c.Sources.HTTP.MaxBytes < 0 {
 			return errors.New("sources.http.max_bytes: must be >= 0")
@@ -522,6 +542,22 @@ func validateAllowedOrigins(name string, origins []string) error {
 		}
 		if strings.ContainsAny(origin, " \t\r\n") {
 			return fmt.Errorf("%s: origin %q must not contain whitespace", name, origin)
+		}
+		u, err := url.Parse(origin)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
+			return fmt.Errorf("%s: origin %q must be an absolute http(s) origin or *", name, origin)
+		}
+	}
+	return nil
+}
+
+func validateHTTPSourceOrigins(name string, origins []string) error {
+	if err := validateAllowedOrigins(name, origins); err != nil {
+		return err
+	}
+	for _, origin := range origins {
+		if strings.TrimSpace(origin) == "*" {
+			return fmt.Errorf("%s: wildcard is not allowed; list exact trusted origins", name)
 		}
 	}
 	return nil

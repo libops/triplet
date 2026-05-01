@@ -3,4 +3,7 @@
   extends: [
     'github>libops/renovate-config:default.json5',
   ],
+  ignoreDeps: [
+    'github.com/libops/govips/v2',
+  ],
 }

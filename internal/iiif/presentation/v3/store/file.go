@@ -83,7 +83,7 @@ func (s *FileStore) PutAnnotationPage(_ context.Context, itemID, canvasID string
 	if err := s.ensureCreatePathContained(dir); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return err
 	}
 	if err := s.ensureContained(dir); err != nil {

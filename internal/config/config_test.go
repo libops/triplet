@@ -92,7 +92,7 @@ server:
 sources:
   default: http
   http:
-    allowed_hosts: [example.org]
+    allowed_origins: [https://example.org]
     max_bytes: 1048576
 `,
 		},
@@ -109,7 +109,7 @@ sources:
       - https://repo.example.edu/system/files
     url_prefixes_are_ocfl: true
   http:
-    allowed_hosts: [repo.example.edu]
+    allowed_origins: [https://repo.example.edu]
 `,
 		},
 		{
@@ -132,7 +132,7 @@ sources:
         auth_error_cache_min_age: 5m
         auth_cache_max_entries: 4096
   http:
-    allowed_hosts: [repo.example.edu]
+    allowed_origins: [https://repo.example.edu]
 `,
 		},
 		{
@@ -146,7 +146,7 @@ sources:
     url_mappings:
       - prefix: https://repo.example.edu/system/files
   http:
-    allowed_hosts: [repo.example.edu]
+    allowed_origins: [https://repo.example.edu]
 `,
 			wantErr: "sources.file.url_mappings[0].root is required",
 		},
@@ -164,7 +164,7 @@ sources:
         auth_probe: true
         auth_cache_ttl: -1s
   http:
-    allowed_hosts: [repo.example.edu]
+    allowed_origins: [https://repo.example.edu]
 `,
 			wantErr: "sources.file.url_mappings[0].auth_cache_ttl",
 		},
@@ -182,7 +182,7 @@ sources:
         auth_probe: true
         auth_authenticated_cache_ttl: -1s
   http:
-    allowed_hosts: [repo.example.edu]
+    allowed_origins: [https://repo.example.edu]
 `,
 			wantErr: "sources.file.url_mappings[0].auth_authenticated_cache_ttl",
 		},
@@ -200,7 +200,7 @@ sources:
         auth_probe: true
         auth_error_cache_min_age: -1s
   http:
-    allowed_hosts: [repo.example.edu]
+    allowed_origins: [https://repo.example.edu]
 `,
 			wantErr: "sources.file.url_mappings[0].auth_error_cache_min_age",
 		},
@@ -218,7 +218,7 @@ sources:
         auth_probe: true
         auth_cache_max_entries: -1
   http:
-    allowed_hosts: [repo.example.edu]
+    allowed_origins: [https://repo.example.edu]
 `,
 			wantErr: "sources.file.url_mappings[0].auth_cache_max_entries",
 		},
@@ -251,7 +251,7 @@ sources:
     url_prefixes:
       - https://repo.example.edu/system/files
   http:
-    allowed_hosts: [repo.example.edu]
+    allowed_origins: [https://repo.example.edu]
 `,
 			wantErr: "sources.file.root is required when sources.file.url_prefixes is configured",
 		},
@@ -277,7 +277,7 @@ iiif:
   image:
     allowed_origins:
       - https://viewer.example.edu
-      - viewer2.example.edu
+      - https://viewer2.example.edu
       - "*"
 sources:
   default: file
@@ -299,7 +299,7 @@ sources:
 			wantErr: "sources.file.root is required",
 		},
 		{
-			name: "http source missing hosts",
+			name: "http source missing origins",
 			body: `
 server:
   public_base_url: http://localhost:8080
@@ -307,7 +307,59 @@ sources:
   default: http
   http: {}
 `,
-			wantErr: "sources.http.allowed_hosts is required",
+			wantErr: "sources.http.allowed_origins is required",
+		},
+		{
+			name: "http source rejects wildcard origin",
+			body: `
+server:
+  public_base_url: http://localhost:8080
+sources:
+  default: http
+  http:
+    allowed_origins: ["*"]
+`,
+			wantErr: "sources.http.allowed_origins",
+		},
+		{
+			name: "http source rejects bare host origin",
+			body: `
+server:
+  public_base_url: http://localhost:8080
+sources:
+  default: http
+  http:
+    allowed_origins: [example.org]
+`,
+			wantErr: "sources.http.allowed_origins",
+		},
+		{
+			name: "pprof enabled requires token",
+			body: `
+server:
+  public_base_url: http://localhost:8080
+debug:
+  pprof_enabled: true
+sources:
+  default: file
+  file:
+    root: /tmp
+`,
+			wantErr: "debug.pprof_token is required",
+		},
+		{
+			name: "trusted proxy cidr invalid",
+			body: `
+server:
+  public_base_url: http://localhost:8080
+logging:
+  trusted_proxy_cidrs: [not-a-cidr]
+sources:
+  default: file
+  file:
+    root: /tmp
+`,
+			wantErr: "logging.trusted_proxy_cidrs",
 		},
 		{
 			name: "bad logging level",
@@ -546,6 +598,9 @@ sources:
 	if c.Logging.Level != "info" {
 		t.Errorf("Logging.Level default = %q", c.Logging.Level)
 	}
+	if c.Metrics.Enabled {
+		t.Errorf("Metrics.Enabled default = %v", c.Metrics.Enabled)
+	}
 	if c.Vips.BlockUntrusted == nil || !*c.Vips.BlockUntrusted {
 		t.Errorf("Vips.BlockUntrusted default = %#v", c.Vips.BlockUntrusted)
 	}
@@ -726,7 +781,7 @@ server:
 sources:
   default: http
   http:
-    allowed_hosts: [example.org]
+    allowed_origins: [https://example.org]
     max_bytes: -1
 `)
 	_, err := Load(path)

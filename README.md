@@ -34,13 +34,15 @@ Current notable knobs:
 - `sources.default` can be `file`, `http`, or `gcs`.
 - `sources.file.url_mappings` lets HTTP identifiers resolve from local disk first.
   For example, `/system/files` can map to `/private`, while `/_flysystem/fedora` can map to an OCFL root.
-  Path-only mappings are scoped by `sources.http.allowed_hosts`.
-- `sources.http.allowed_hosts` is the primary security boundary for remote
-  source images. Keep it to the exact upstream hostnames Triplet is allowed to
-  fetch; an empty list denies all HTTP sources and `*` should only be used in
-  closed internal deployments. Private, loopback, link-local, and metadata
-  addresses are blocked unless `sources.http.allow_private_hosts` is explicitly
-  enabled.
+  Path-only mappings are scoped by `sources.http.allowed_origins`.
+- `sources.http.allowed_origins` is the primary security boundary for remote
+  source images. Keep it to the exact upstream origins Triplet is allowed to
+  fetch, including scheme and port when needed. An empty list denies all HTTP
+  sources and wildcards are rejected. Private, loopback, link-local, and
+  metadata addresses are blocked unless `sources.http.allow_private_hosts` is
+  explicitly enabled. When private hosts are blocked, Triplet resolves the
+  hostname once and connects only to a verified public IP, so DNS rebinding
+  cannot swap the connection target after validation.
 - `cache.root` / `cache.bucket_url` configure derivative caching.
 - `cache.source_root` / `cache.source_bucket_url` configure HTTP source caching.
 
@@ -147,13 +149,12 @@ deployment does not accept a format.
 
 ## Deploys
 
-- `deploy/cloudrun/` — multi-region Cloud Run, mirrors the
-  [`cantaloupe-cloudrun`](https://github.com/libops/cantaloupe-cloudrun) layout.
 - `deploy/compose/` — single-host docker-compose for self-hosters.
 
-GCP is treated as a first-class target but no Google API leaks above the
-storage abstraction. AWS/S3 is intentionally out of scope for this spike. The
-runtime also exposes Prometheus metrics at `/metrics`.
+GCS is supported as a storage/cache backend without leaking Google APIs above
+the storage abstraction. AWS/S3 is intentionally out of scope for this spike.
+The runtime exposes Prometheus metrics at `/metrics` when `metrics.enabled` is
+true.
 
 When using MariaDB for Presentation storage, apply the schema as a migration
 step with a DDL-capable account:

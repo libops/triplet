@@ -30,10 +30,10 @@ type LocalURLFallback struct {
 	File     *FileOpener
 	OCFL     bool
 	Mappings []LocalURLMapping
-	// AllowedHosts gates path-only mappings for absolute HTTP identifiers.
-	AllowedHosts []string
-	Fallback     Opener
-	Logger       *slog.Logger
+	// AllowedOrigins gates path-only mappings for absolute HTTP identifiers.
+	AllowedOrigins []string
+	Fallback       Opener
+	Logger         *slog.Logger
 	// AuthFallback is used for matched auth-probed URL mappings when local
 	// lookup misses. It should bypass shared source caches.
 	AuthFallback *HTTPOpener
@@ -270,7 +270,7 @@ func (l *LocalURLFallback) stripLocalURLPrefix(identifier, prefix string) (strin
 	prefix = strings.TrimRight(prefix, "/")
 	if strings.HasPrefix(prefix, "/") {
 		if u, err := url.Parse(identifier); err == nil && u.Scheme != "" && u.Host != "" {
-			if !localURLHostAllowed(u.Hostname(), l.AllowedHosts) {
+			if !localURLOriginAllowed(u, l.AllowedOrigins) {
 				return "", false
 			}
 			return stripLocalPathPrefix(u.Path, prefix)
@@ -280,16 +280,13 @@ func (l *LocalURLFallback) stripLocalURLPrefix(identifier, prefix string) (strin
 	return stripLocalPathPrefix(identifier, prefix)
 }
 
-func localURLHostAllowed(host string, allowedHosts []string) bool {
-	if len(allowedHosts) == 0 {
+func localURLOriginAllowed(u *url.URL, allowedOrigins []string) bool {
+	if len(allowedOrigins) == 0 {
 		return false
 	}
-	host = strings.ToLower(strings.TrimSpace(host))
-	if slices.Contains(allowedHosts, "*") {
-		return true
-	}
-	for _, allowed := range allowedHosts {
-		if strings.ToLower(strings.TrimSpace(allowed)) == host {
+	origin := urlOrigin(u)
+	for _, allowed := range allowedOrigins {
+		if strings.EqualFold(strings.TrimSpace(allowed), origin) {
 			return true
 		}
 	}
