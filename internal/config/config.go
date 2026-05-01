@@ -140,6 +140,7 @@ type FileURLMapping struct {
 	AuthCacheTTL              time.Duration `yaml:"auth_cache_ttl"`
 	AuthAnonymousCacheTTL     time.Duration `yaml:"auth_anonymous_cache_ttl"`
 	AuthAuthenticatedCacheTTL time.Duration `yaml:"auth_authenticated_cache_ttl"`
+	AuthErrorCacheMinAge      time.Duration `yaml:"auth_error_cache_min_age"`
 	AuthCacheMaxEntries       int           `yaml:"auth_cache_max_entries"`
 }
 
@@ -460,6 +461,9 @@ func (c *Config) validate() error {
 			}
 			if mapping.AuthAuthenticatedCacheTTL < 0 {
 				return fmt.Errorf("sources.file.url_mappings[%d].auth_authenticated_cache_ttl: must be >= 0", i)
+			}
+			if mapping.AuthErrorCacheMinAge < 0 {
+				return fmt.Errorf("sources.file.url_mappings[%d].auth_error_cache_min_age: must be >= 0", i)
 			}
 			if mapping.AuthCacheMaxEntries < 0 {
 				return fmt.Errorf("sources.file.url_mappings[%d].auth_cache_max_entries: must be >= 0", i)

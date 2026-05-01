@@ -129,6 +129,7 @@ sources:
     #     auth_probe: true
     #     auth_anonymous_cache_ttl: 720h
     #     auth_authenticated_cache_ttl: 168h
+    #     auth_error_cache_min_age: 5m
     #     auth_cache_max_entries: 4096
     #   - prefix: /fedora
     #     root: /fcrepo
@@ -141,6 +142,8 @@ sources:
     # Auth probes are tiered: anonymous is checked first and cached separately;
     # credentialed probes only run when anonymous access is denied. Long TTLs
     # are explicit access-staleness windows; defaults are short when omitted.
+    # 403/404 probe results are not cached when Last-Modified is newer than
+    # auth_error_cache_min_age, avoiding permission-publication races.
   # Optional HTTP(S) source. When configured alongside the file source,
   # `http://...` and `https://...` identifiers are routed here automatically.
   #
