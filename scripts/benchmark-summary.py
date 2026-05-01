@@ -36,20 +36,35 @@ def main():
 
     with open(sys.argv[2], "w", newline="", encoding="utf-8") as fh:
         writer = csv.writer(fh)
-        writer.writerow(["server", "request_name", "count", "mean_s", "median_s", "p90_s", "p95_s", "p99_s", "min_s", "max_s"])
+        writer.writerow(
+            [
+                "server",
+                "request_name",
+                "count",
+                "mean_s",
+                "median_s",
+                "p90_s",
+                "p95_s",
+                "p99_s",
+                "min_s",
+                "max_s",
+            ]
+        )
         for (server, request_name), values in sorted(groups.items()):
-            writer.writerow([
-                server,
-                request_name,
-                len(values),
-                f"{statistics.fmean(values):.6f}",
-                f"{statistics.median(values):.6f}",
-                f"{percentile(values, 0.90):.6f}",
-                f"{percentile(values, 0.95):.6f}",
-                f"{percentile(values, 0.99):.6f}",
-                f"{min(values):.6f}",
-                f"{max(values):.6f}",
-            ])
+            writer.writerow(
+                [
+                    server,
+                    request_name,
+                    len(values),
+                    f"{statistics.fmean(values):.6f}",
+                    f"{statistics.median(values):.6f}",
+                    f"{percentile(values, 0.90):.6f}",
+                    f"{percentile(values, 0.95):.6f}",
+                    f"{percentile(values, 0.99):.6f}",
+                    f"{min(values):.6f}",
+                    f"{max(values):.6f}",
+                ]
+            )
 
 
 if __name__ == "__main__":

@@ -66,9 +66,20 @@ def percentile(values, pct):
 
 def main():
     if len(sys.argv) != 3:
-        raise SystemExit("usage: benchmark-stats-summary.py container-stats.jsonl resource-summary.csv")
+        raise SystemExit(
+            "usage: benchmark-stats-summary.py container-stats.jsonl resource-summary.csv"
+        )
 
-    groups = defaultdict(lambda: {"cpu": [], "mem": [], "block_read": [], "block_write": [], "net_rx": [], "net_tx": []})
+    groups = defaultdict(
+        lambda: {
+            "cpu": [],
+            "mem": [],
+            "block_read": [],
+            "block_write": [],
+            "net_rx": [],
+            "net_tx": [],
+        }
+    )
     with open(sys.argv[1], encoding="utf-8") as fh:
         for line in fh:
             if not line.strip():
@@ -89,28 +100,30 @@ def main():
 
     with open(sys.argv[2], "w", newline="", encoding="utf-8") as fh:
         writer = csv.writer(fh)
-        writer.writerow([
-            "server",
-            "samples",
-            "mean_cpu_percent",
-            "p90_cpu_percent",
-            "p95_cpu_percent",
-            "p99_cpu_percent",
-            "max_cpu_percent",
-            "mean_mem_mib",
-            "p90_mem_mib",
-            "p95_mem_mib",
-            "p99_mem_mib",
-            "max_mem_mib",
-            "block_read_delta_bytes",
-            "block_write_delta_bytes",
-            "block_read_max_bytes",
-            "block_write_max_bytes",
-            "net_rx_delta_bytes",
-            "net_tx_delta_bytes",
-            "net_rx_max_bytes",
-            "net_tx_max_bytes",
-        ])
+        writer.writerow(
+            [
+                "server",
+                "samples",
+                "mean_cpu_percent",
+                "p90_cpu_percent",
+                "p95_cpu_percent",
+                "p99_cpu_percent",
+                "max_cpu_percent",
+                "mean_mem_mib",
+                "p90_mem_mib",
+                "p95_mem_mib",
+                "p99_mem_mib",
+                "max_mem_mib",
+                "block_read_delta_bytes",
+                "block_write_delta_bytes",
+                "block_read_max_bytes",
+                "block_write_max_bytes",
+                "net_rx_delta_bytes",
+                "net_tx_delta_bytes",
+                "net_rx_max_bytes",
+                "net_tx_max_bytes",
+            ]
+        )
         for server, values in sorted(groups.items()):
             cpu = values["cpu"]
             mem = values["mem"]
@@ -118,28 +131,30 @@ def main():
             block_write = values["block_write"]
             net_rx = values["net_rx"]
             net_tx = values["net_tx"]
-            writer.writerow([
-                server,
-                len(cpu),
-                f"{statistics.fmean(cpu):.3f}" if cpu else "",
-                f"{percentile(cpu, 0.90):.3f}" if cpu else "",
-                f"{percentile(cpu, 0.95):.3f}" if cpu else "",
-                f"{percentile(cpu, 0.99):.3f}" if cpu else "",
-                f"{max(cpu):.3f}" if cpu else "",
-                f"{statistics.fmean(mem) / 1024 / 1024:.3f}" if mem else "",
-                f"{percentile(mem, 0.90) / 1024 / 1024:.3f}" if mem else "",
-                f"{percentile(mem, 0.95) / 1024 / 1024:.3f}" if mem else "",
-                f"{percentile(mem, 0.99) / 1024 / 1024:.3f}" if mem else "",
-                f"{max(mem) / 1024 / 1024:.3f}" if mem else "",
-                f"{delta(block_read):.0f}" if block_read else "",
-                f"{delta(block_write):.0f}" if block_write else "",
-                f"{max(block_read):.0f}" if block_read else "",
-                f"{max(block_write):.0f}" if block_write else "",
-                f"{delta(net_rx):.0f}" if net_rx else "",
-                f"{delta(net_tx):.0f}" if net_tx else "",
-                f"{max(net_rx):.0f}" if net_rx else "",
-                f"{max(net_tx):.0f}" if net_tx else "",
-            ])
+            writer.writerow(
+                [
+                    server,
+                    len(cpu),
+                    f"{statistics.fmean(cpu):.3f}" if cpu else "",
+                    f"{percentile(cpu, 0.90):.3f}" if cpu else "",
+                    f"{percentile(cpu, 0.95):.3f}" if cpu else "",
+                    f"{percentile(cpu, 0.99):.3f}" if cpu else "",
+                    f"{max(cpu):.3f}" if cpu else "",
+                    f"{statistics.fmean(mem) / 1024 / 1024:.3f}" if mem else "",
+                    f"{percentile(mem, 0.90) / 1024 / 1024:.3f}" if mem else "",
+                    f"{percentile(mem, 0.95) / 1024 / 1024:.3f}" if mem else "",
+                    f"{percentile(mem, 0.99) / 1024 / 1024:.3f}" if mem else "",
+                    f"{max(mem) / 1024 / 1024:.3f}" if mem else "",
+                    f"{delta(block_read):.0f}" if block_read else "",
+                    f"{delta(block_write):.0f}" if block_write else "",
+                    f"{max(block_read):.0f}" if block_read else "",
+                    f"{max(block_write):.0f}" if block_write else "",
+                    f"{delta(net_rx):.0f}" if net_rx else "",
+                    f"{delta(net_tx):.0f}" if net_tx else "",
+                    f"{max(net_rx):.0f}" if net_rx else "",
+                    f"{max(net_tx):.0f}" if net_tx else "",
+                ]
+            )
 
 
 if __name__ == "__main__":

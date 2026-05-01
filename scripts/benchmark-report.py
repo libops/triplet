@@ -117,7 +117,9 @@ def summarize_requests(rows):
             group["times"].append(row["time_total"])
             group["sizes"].append(row["size_download"])
         else:
-            failures[(row["server"], row["request_name"], row["curl_exit"], row["http_code"])] += 1
+            failures[
+                (row["server"], row["request_name"], row["curl_exit"], row["http_code"])
+            ] += 1
     return groups, failures
 
 
@@ -200,7 +202,10 @@ def build_report(requests_csv, resource_csv, run_json):
                 ["Passes", str(run.get("passes", "-"))],
                 ["Warmup passes", str(run.get("warmup_passes", "-"))],
                 ["Concurrency", str(run.get("concurrency", "-"))],
-                ["Measured duration", format_duration(run.get("measured_duration_seconds"))],
+                [
+                    "Measured duration",
+                    format_duration(run.get("measured_duration_seconds")),
+                ],
                 ["Measured requests", str(measured_requests)],
                 ["Expected requests/server", str(expected_per_server)],
                 ["Expected requests total", str(expected_total)],
@@ -223,11 +228,20 @@ def build_report(requests_csv, resource_csv, run_json):
         other = next(server for server in servers if server != "triplet")
         comparison_rows = []
         for request_name in requests:
-            triplet = groups.get(("triplet", request_name), {"total": 0, "ok": 0, "times": [], "sizes": []})
-            peer = groups.get((other, request_name), {"total": 0, "ok": 0, "times": [], "sizes": []})
-            triplet_median = statistics.median(triplet["times"]) if triplet["times"] else None
+            triplet = groups.get(
+                ("triplet", request_name),
+                {"total": 0, "ok": 0, "times": [], "sizes": []},
+            )
+            peer = groups.get(
+                (other, request_name), {"total": 0, "ok": 0, "times": [], "sizes": []}
+            )
+            triplet_median = (
+                statistics.median(triplet["times"]) if triplet["times"] else None
+            )
             peer_median = statistics.median(peer["times"]) if peer["times"] else None
-            triplet_size = statistics.fmean(triplet["sizes"]) if triplet["sizes"] else None
+            triplet_size = (
+                statistics.fmean(triplet["sizes"]) if triplet["sizes"] else None
+            )
             peer_size = statistics.fmean(peer["sizes"]) if peer["sizes"] else None
             comparison_rows.append(
                 [
@@ -277,24 +291,45 @@ def build_report(requests_csv, resource_csv, run_json):
         latency_rows = []
         for request_name in requests:
             for server in servers:
-                stats = groups.get((server, request_name), {"total": 0, "ok": 0, "times": [], "sizes": []})
+                stats = groups.get(
+                    (server, request_name),
+                    {"total": 0, "ok": 0, "times": [], "sizes": []},
+                )
                 latency_rows.append(
                     [
                         request_name,
                         server,
                         fmt_rate(stats["ok"], stats["total"]),
-                        fmt_ms(statistics.median(stats["times"]) if stats["times"] else None),
+                        fmt_ms(
+                            statistics.median(stats["times"])
+                            if stats["times"]
+                            else None
+                        ),
                         fmt_ms(percentile(stats["times"], 0.90)),
                         fmt_ms(percentile(stats["times"], 0.95)),
                         fmt_ms(percentile(stats["times"], 0.99)),
-                        fmt_ms(statistics.fmean(stats["times"]) if stats["times"] else None),
-                        fmt_size(statistics.fmean(stats["sizes"]) if stats["sizes"] else None),
+                        fmt_ms(
+                            statistics.fmean(stats["times"]) if stats["times"] else None
+                        ),
+                        fmt_size(
+                            statistics.fmean(stats["sizes"]) if stats["sizes"] else None
+                        ),
                     ]
                 )
         lines.extend(
             [
                 table(
-                    ["Request", "Server", "Success", "Median ms", "p90 ms", "p95 ms", "p99 ms", "Mean ms", "Mean bytes"],
+                    [
+                        "Request",
+                        "Server",
+                        "Success",
+                        "Median ms",
+                        "p90 ms",
+                        "p95 ms",
+                        "p99 ms",
+                        "Mean ms",
+                        "Mean bytes",
+                    ],
                     latency_rows,
                 ),
                 "",
@@ -308,11 +343,19 @@ def build_report(requests_csv, resource_csv, run_json):
         other = next(server for server in servers if server != "triplet")
         per_image_rows = []
         for image in images:
-            triplet = image_groups.get(("triplet", image), {"total": 0, "ok": 0, "times": [], "sizes": []})
-            peer = image_groups.get((other, image), {"total": 0, "ok": 0, "times": [], "sizes": []})
-            triplet_median = statistics.median(triplet["times"]) if triplet["times"] else None
+            triplet = image_groups.get(
+                ("triplet", image), {"total": 0, "ok": 0, "times": [], "sizes": []}
+            )
+            peer = image_groups.get(
+                (other, image), {"total": 0, "ok": 0, "times": [], "sizes": []}
+            )
+            triplet_median = (
+                statistics.median(triplet["times"]) if triplet["times"] else None
+            )
             peer_median = statistics.median(peer["times"]) if peer["times"] else None
-            triplet_size = statistics.fmean(triplet["sizes"]) if triplet["sizes"] else None
+            triplet_size = (
+                statistics.fmean(triplet["sizes"]) if triplet["sizes"] else None
+            )
             peer_size = statistics.fmean(peer["sizes"]) if peer["sizes"] else None
             per_image_rows.append(
                 [
@@ -354,18 +397,34 @@ def build_report(requests_csv, resource_csv, run_json):
         per_image_rows = []
         for image in images:
             for server in servers:
-                stats = image_groups.get((server, image), {"total": 0, "ok": 0, "times": [], "sizes": []})
+                stats = image_groups.get(
+                    (server, image), {"total": 0, "ok": 0, "times": [], "sizes": []}
+                )
                 per_image_rows.append(
                     [
                         image,
                         server,
                         fmt_rate(stats["ok"], stats["total"]),
-                        fmt_ms(statistics.median(stats["times"]) if stats["times"] else None),
+                        fmt_ms(
+                            statistics.median(stats["times"])
+                            if stats["times"]
+                            else None
+                        ),
                         fmt_ms(percentile(stats["times"], 0.99)),
-                        fmt_size(statistics.fmean(stats["sizes"]) if stats["sizes"] else None),
+                        fmt_size(
+                            statistics.fmean(stats["sizes"]) if stats["sizes"] else None
+                        ),
                     ]
                 )
-        lines.extend([table(["Image", "Server", "Success", "Median ms", "p99 ms", "Mean bytes"], per_image_rows), ""])
+        lines.extend(
+            [
+                table(
+                    ["Image", "Server", "Success", "Median ms", "p99 ms", "Mean bytes"],
+                    per_image_rows,
+                ),
+                "",
+            ]
+        )
 
     lines.extend(["## Overall", ""])
 
@@ -391,7 +450,19 @@ def build_report(requests_csv, resource_csv, run_json):
         )
     lines.extend(
         [
-            table(["Server", "Success", "Median ms", "p90 ms", "p95 ms", "p99 ms", "Mean ms", "Mean bytes"], overall_rows),
+            table(
+                [
+                    "Server",
+                    "Success",
+                    "Median ms",
+                    "p90 ms",
+                    "p95 ms",
+                    "p99 ms",
+                    "Mean ms",
+                    "Mean bytes",
+                ],
+                overall_rows,
+            ),
             "",
             "## Resources",
             "",
@@ -408,7 +479,9 @@ def build_report(requests_csv, resource_csv, run_json):
         if successes:
             try:
                 mean_cpu = float(row.get("mean_cpu_percent", ""))
-                cpu_per_request = f"{(mean_cpu / 100 * measured_duration / successes):.4f}"
+                cpu_per_request = (
+                    f"{(mean_cpu / 100 * measured_duration / successes):.4f}"
+                )
             except ValueError:
                 pass
             try:
@@ -437,7 +510,22 @@ def build_report(requests_csv, resource_csv, run_json):
     lines.extend(
         [
             table(
-                ["Server", "Samples", "CPU sec / OK req", "Mean CPU %", "p90 CPU %", "p95 CPU %", "p99 CPU %", "Max CPU %", "Mean Mem MiB / OK req", "Mean Mem MiB", "p90 Mem MiB", "p95 Mem MiB", "p99 Mem MiB", "Max Mem MiB"],
+                [
+                    "Server",
+                    "Samples",
+                    "CPU sec / OK req",
+                    "Mean CPU %",
+                    "p90 CPU %",
+                    "p95 CPU %",
+                    "p99 CPU %",
+                    "Max CPU %",
+                    "Mean Mem MiB / OK req",
+                    "Mean Mem MiB",
+                    "p90 Mem MiB",
+                    "p95 Mem MiB",
+                    "p99 Mem MiB",
+                    "Max Mem MiB",
+                ],
                 resource_rows,
             ),
             "",
@@ -466,7 +554,17 @@ def build_report(requests_csv, resource_csv, run_json):
             "## I/O",
             "",
             table(
-                ["Server", "Block read", "Block write", "Block read / OK req", "Block write / OK req", "Net rx", "Net tx", "Net rx / OK req", "Net tx / OK req"],
+                [
+                    "Server",
+                    "Block read",
+                    "Block write",
+                    "Block read / OK req",
+                    "Block write / OK req",
+                    "Net rx",
+                    "Net tx",
+                    "Net rx / OK req",
+                    "Net tx / OK req",
+                ],
                 io_rows,
             ),
             "",
@@ -476,13 +574,17 @@ def build_report(requests_csv, resource_csv, run_json):
     if failures:
         failure_rows = [
             [server, request_name, curl_exit, http_code, count]
-            for (server, request_name, curl_exit, http_code), count in sorted(failures.items())
+            for (server, request_name, curl_exit, http_code), count in sorted(
+                failures.items()
+            )
         ]
         lines.extend(
             [
                 "## Failures",
                 "",
-                table(["Server", "Request", "curl exit", "HTTP", "Count"], failure_rows),
+                table(
+                    ["Server", "Request", "curl exit", "HTTP", "Count"], failure_rows
+                ),
                 "",
             ]
         )
@@ -492,7 +594,9 @@ def build_report(requests_csv, resource_csv, run_json):
 
 def main():
     if len(sys.argv) != 5:
-        raise SystemExit("usage: benchmark-report.py requests.csv resource-summary.csv run.json report.md")
+        raise SystemExit(
+            "usage: benchmark-report.py requests.csv resource-summary.csv run.json report.md"
+        )
 
     report = build_report(Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3]))
     Path(sys.argv[4]).write_text(report, encoding="utf-8")

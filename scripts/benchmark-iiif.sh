@@ -11,9 +11,12 @@ OUT_DIR="$OUT_ROOT/$RUN_ID"
 MATRIX="${BENCH_MATRIX:-1}"
 MODE="${BENCH_MODE:-uncached}"
 MODES="${BENCH_MODES:-uncached cached}"
-CONCURRENCY_LIST="${BENCH_CONCURRENCY_LIST:-1 4 8}"
+CONCURRENCY_LIST="${BENCH_CONCURRENCY_LIST:-}"
+UNCACHED_CONCURRENCY_LIST="${BENCH_UNCACHED_CONCURRENCY_LIST:-2 4 8}"
+CACHED_CONCURRENCY_LIST="${BENCH_CACHED_CONCURRENCY_LIST:-8 32 128}"
 TRIPLET_IMAGE="${BENCH_TRIPLET_IMAGE:-triplet-benchmark:dev}"
 CANTALOUPE_IMAGE="${BENCH_CANTALOUPE_IMAGE:-islandora/cantaloupe:main}"
+SKIP_BUILD="${BENCH_SKIP_BUILD:-0}"
 TRIPLET_PORT="${BENCH_TRIPLET_PORT:-18080}"
 CANTALOUPE_PORT="${BENCH_CANTALOUPE_PORT:-18182}"
 PASSES="${BENCH_PASSES:-5}"
@@ -28,6 +31,7 @@ PROFILE_SECONDS="${BENCH_PROFILE_SECONDS:-30}"
 TRIPLET_COLOR_MANAGEMENT="${BENCH_TRIPLET_COLOR_MANAGEMENT:-preserve}"
 TRIPLET_LOAD_ACCESS="${BENCH_TRIPLET_LOAD_ACCESS:-auto}"
 PRINT_REPORT="${BENCH_PRINT_REPORT:-1}"
+APPEND_RUN_REPORTS="${BENCH_APPEND_RUN_REPORTS:-1}"
 
 NETWORK="triplet-bench-$RUN_ID"
 TRIPLET_CONTAINER="triplet-bench-triplet-$RUN_ID"
@@ -275,19 +279,27 @@ run_matrix() {
   {
     echo "# Benchmark Matrix: $RUN_ID"
     echo
+    echo "## Matrix Runs"
+    echo
     echo "| Mode | Concurrency | Report | Status |"
     echo "| --- | --- | --- | --- |"
   } >"$index"
 
-  local requested_mode mode concurrency child_id child_dir status
+  if [ "$SKIP_BUILD" != "1" ]; then
+    echo "Building Triplet benchmark image once for matrix: $TRIPLET_IMAGE"
+    docker build --target runtime -t "$TRIPLET_IMAGE" "$ROOT_DIR"
+  fi
+
+  local requested_mode mode concurrency child_id child_dir status mode_concurrency_list
   for requested_mode in $MODES; do
     mode="$(normalize_mode "$requested_mode")"
-    for concurrency in $CONCURRENCY_LIST; do
+    mode_concurrency_list="$(concurrency_list_for_mode "$mode")"
+    for concurrency in $mode_concurrency_list; do
       child_id="$RUN_ID-$mode-c$concurrency"
       child_dir="$OUT_ROOT/$child_id"
       echo "Running benchmark mode=$mode concurrency=$concurrency"
       status="ok"
-      if ! BENCH_MATRIX=0 BENCH_PRINT_REPORT=0 BENCH_MODE="$mode" BENCH_CONCURRENCY="$concurrency" BENCH_RUN_ID="$child_id" "$0"; then
+      if ! BENCH_MATRIX=0 BENCH_SKIP_BUILD=1 BENCH_PRINT_REPORT=0 BENCH_MODE="$mode" BENCH_CONCURRENCY="$concurrency" BENCH_RUN_ID="$child_id" "$0"; then
         status="failed"
       fi
       if [ -f "$child_dir/report.md" ]; then
@@ -302,10 +314,31 @@ run_matrix() {
   done
 
   write_matrix_summary "$index"
-  append_matrix_reports "$index"
+  if [ "$APPEND_RUN_REPORTS" = "1" ]; then
+    append_matrix_reports "$index"
+  fi
   echo "Benchmark matrix complete: $OUT_DIR"
   echo "Report: $index"
   cat "$index"
+}
+
+concurrency_list_for_mode() {
+  if [ -n "$CONCURRENCY_LIST" ]; then
+    echo "$CONCURRENCY_LIST"
+    return
+  fi
+  case "$1" in
+    uncached)
+      echo "$UNCACHED_CONCURRENCY_LIST"
+      ;;
+    cached)
+      echo "$CACHED_CONCURRENCY_LIST"
+      ;;
+    *)
+      echo "unsupported benchmark mode for concurrency selection: $1" >&2
+      return 1
+      ;;
+  esac
 }
 
 normalize_mode() {
@@ -336,8 +369,13 @@ out_root = Path(sys.argv[1])
 run_id = sys.argv[2]
 index = Path(sys.argv[3])
 
+MODE_ORDER = {"uncached": 0, "cached": 1}
+
 def fmt_ms(value):
     return "-" if value is None else f"{value * 1000:.1f}"
+
+def fmt_cpu_ms(value):
+    return "-" if value is None else f"{value * 1000:.2f}"
 
 def fmt_size(value):
     if value is None:
@@ -351,13 +389,42 @@ def fmt_size(value):
         size /= 1024
     return f"{size:.0f} {unit}" if unit == "B" else f"{size:.1f} {unit}"
 
-rows = []
+def fmt_rate(ok, total):
+    if total == 0:
+        return "-"
+    return f"{ok}/{total} ({ok / total * 100:.0f}%)"
+
+def percentile(values, pct):
+    if not values:
+        return None
+    ordered = sorted(values)
+    index = (len(ordered) - 1) * pct
+    lower = int(index)
+    upper = min(lower + 1, len(ordered) - 1)
+    if lower == upper:
+        return ordered[lower]
+    weight = index - lower
+    return ordered[lower] * (1 - weight) + ordered[upper] * weight
+
+def read_resources(path):
+    if not path.exists():
+        return {}
+    with path.open(newline="", encoding="utf-8") as fh:
+        return {row["server"]: row for row in csv.DictReader(fh)}
+
+def sort_key(row):
+    return (MODE_ORDER.get(row["mode"], 99), int(row["concurrency"]))
+
+summary_rows = []
+overall_rows = []
+triplet_images = set()
 for run_json in sorted(out_root.glob(f"{run_id}-*/run.json")):
     run_dir = run_json.parent
     requests_csv = run_dir / "requests.csv"
     if not requests_csv.exists():
         continue
     run = json.loads(run_json.read_text(encoding="utf-8"))
+    triplet_images.add(run.get("triplet_image", "-"))
     by_server = {}
     with requests_csv.open(newline="", encoding="utf-8") as fh:
         for row in csv.DictReader(fh):
@@ -367,27 +434,87 @@ for run_json in sorted(out_root.glob(f"{run_id}-*/run.json")):
                 stats["ok"] += 1
                 stats["times"].append(float(row["time_total"]))
                 stats["sizes"].append(int(float(row["size_download"])))
+    resources = read_resources(run_dir / "resource-summary.csv")
+    triplet = by_server.get("triplet", {"total": 0, "ok": 0, "times": [], "sizes": []})
+    triplet_times = triplet["times"]
+    duration = float(run.get("measured_duration_seconds") or 0)
+    cpu_per_request = None
+    try:
+        if triplet["ok"]:
+            mean_cpu = float(resources.get("triplet", {}).get("mean_cpu_percent", ""))
+            cpu_per_request = mean_cpu / 100 * duration / triplet["ok"]
+    except ValueError:
+        pass
+    max_mem = None
+    try:
+        max_mem = float(resources.get("triplet", {}).get("max_mem_mib", ""))
+    except ValueError:
+        pass
+    summary_rows.append({
+        "mode": run.get("mode", "-"),
+        "concurrency": str(run.get("concurrency", "-")),
+        "row": [
+            run.get("mode", "-"),
+            str(run.get("concurrency", "-")),
+            fmt_rate(triplet["ok"], triplet["total"]),
+            fmt_ms(statistics.median(triplet_times) if triplet_times else None),
+            fmt_ms(percentile(triplet_times, 0.95)),
+            fmt_ms(percentile(triplet_times, 0.99)),
+            fmt_cpu_ms(cpu_per_request),
+            f"{max_mem:.1f}" if max_mem is not None else "-",
+        ],
+    })
     for server, stats in sorted(by_server.items()):
         times = stats["times"]
         sizes = stats["sizes"]
-        rows.append([
-            run.get("mode", "-"),
-            str(run.get("concurrency", "-")),
-            server,
-            f'{stats["ok"]}/{stats["total"]}',
-            fmt_ms(statistics.median(times) if times else None),
-            fmt_ms(statistics.fmean(times) if times else None),
-            fmt_size(statistics.fmean(sizes) if sizes else None),
-            f"[report](../{run_dir.name}/report.md)",
-        ])
+        overall_rows.append({
+            "mode": run.get("mode", "-"),
+            "concurrency": str(run.get("concurrency", "-")),
+            "server": server,
+            "row": [
+                run.get("mode", "-"),
+                str(run.get("concurrency", "-")),
+                server,
+                fmt_rate(stats["ok"], stats["total"]),
+                fmt_ms(statistics.median(times) if times else None),
+                fmt_ms(statistics.fmean(times) if times else None),
+                fmt_size(statistics.fmean(sizes) if sizes else None),
+                f"[report](../{run_dir.name}/report.md)",
+            ],
+        })
 
-if rows:
-    with index.open("a", encoding="utf-8") as fh:
-        fh.write("\n## Overall Summary\n\n")
-        fh.write("| Mode | Concurrency | Server | Success | Median ms | Mean ms | Mean bytes | Report |\n")
-        fh.write("| --- | --- | --- | --- | --- | --- | --- | --- |\n")
-        for row in rows:
-            fh.write("| " + " | ".join(row) + " |\n")
+if summary_rows:
+    original = index.read_text(encoding="utf-8")
+    title, _, remainder = original.partition("\n\n")
+    lines = [
+        title,
+        "",
+        "## Summary",
+        "",
+        f"Triplet image: `{', '.join(sorted(triplet_images))}`",
+        "",
+        "| Mode | Concurrency | Triplet OK | Median ms | p95 ms | p99 ms | CPU ms/req | Max MiB |",
+        "| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: |",
+    ]
+    for item in sorted(summary_rows, key=sort_key):
+        lines.append("| " + " | ".join(item["row"]) + " |")
+    lines.extend([
+        "",
+        "Status reflects Triplet request success. Performance metrics are informational.",
+        "",
+    ])
+    if remainder:
+        lines.append(remainder.rstrip())
+        lines.append("")
+    lines.extend([
+        "## Overall Summary",
+        "",
+        "| Mode | Concurrency | Server | Success | Median ms | Mean ms | Mean bytes | Report |",
+        "| --- | ---: | --- | --- | ---: | ---: | ---: | --- |",
+    ])
+    for item in sorted(overall_rows, key=lambda row: (sort_key(row), row["server"])):
+        lines.append("| " + " | ".join(item["row"]) + " |")
+    index.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
 PY
 }
 
@@ -482,8 +609,12 @@ main() {
 {"run_id":"$RUN_ID","mode":"$MODE","image_dir":"$IMAGE_DIR","requests_file":"$REQUESTS_FILE","passes":$PASSES,"warmup_passes":$WARMUP_PASSES,"concurrency":$CONCURRENCY,"stats_interval_seconds":$STATS_INTERVAL,"profile_enabled":$PROFILE,"profile_seconds":$PROFILE_SECONDS,"triplet_image":"$TRIPLET_IMAGE","cantaloupe_image":"$CANTALOUPE_IMAGE","triplet_cache":"$triplet_cache_desc","cantaloupe_cache":"$cantaloupe_cache_desc","triplet_color_management":"$TRIPLET_COLOR_MANAGEMENT","triplet_load_access":"$TRIPLET_LOAD_ACCESS","started_at":"$(date -u +%Y-%m-%dT%H:%M:%SZ)"}
 EOF
 
-  echo "Building Triplet benchmark image: $TRIPLET_IMAGE"
-  docker build --target runtime -t "$TRIPLET_IMAGE" "$ROOT_DIR"
+  if [ "$SKIP_BUILD" = "1" ]; then
+    echo "Using existing Triplet benchmark image: $TRIPLET_IMAGE"
+  else
+    echo "Building Triplet benchmark image: $TRIPLET_IMAGE"
+    docker build --target runtime -t "$TRIPLET_IMAGE" "$ROOT_DIR"
+  fi
 
   docker network create "$NETWORK" >/dev/null
 

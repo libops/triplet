@@ -91,7 +91,10 @@ jobs:
 
       - name: Set branch image tag
         shell: bash
-        run: echo "GIT_BRANCH=${GITHUB_REF_NAME//\//-}" >> "$GITHUB_ENV"
+        run: |
+          branch="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
+          tag="$(printf '%s' "$branch" | sed 's/[^a-zA-Z0-9._-]//g' | awk '{print substr($0, length($0)-120)}')"
+          echo "GIT_BRANCH=$tag" >> "$GITHUB_ENV"
 
       - name: Cache container Go test state
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
@@ -140,3 +143,83 @@ jobs:
         working-directory: deploy/compose
         run: docker compose -f docker-compose.yaml -p triplet-integration logs
           --no-color
+
+  benchmark-matrix:
+    needs: [ push-images ]
+    if: github.event_name == 'push' && github.ref != 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    permissions:
+      contents: read
+      issues: write
+      packages: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Find open PR
+        id: find_pr
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        with:
+          result-encoding: string
+          script: |
+            const branch = context.ref.replace('refs/heads/', '');
+            const { data: pulls } = await github.rest.pulls.list({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              head: `${context.repo.owner}:${branch}`,
+            });
+            return pulls[0]?.number ?? '';
+
+      - name: Log in to GHCR
+        if: steps.find_pr.outputs.result != ''
+        run: echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Run IIIF benchmark matrix
+        if: steps.find_pr.outputs.result != ''
+        id: benchmarks
+        continue-on-error: true
+        env:
+          PR_NUMBER: ${{ steps.find_pr.outputs.result }}
+        run: make benchmark-iiif-pr
+
+      - name: Comment PR with benchmark results
+        if: always() && steps.find_pr.outputs.result != ''
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        with:
+          script: |
+            const fs = require('fs');
+            const results = fs.readFileSync('benchmark_results.md', 'utf8');
+            const marker = '<!-- triplet-iiif-benchmark-results -->';
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: Number('${{ steps.find_pr.outputs.result }}'),
+            });
+
+            const botComment = comments.find(comment =>
+              comment.user.type === 'Bot' &&
+              comment.body.includes(marker)
+            );
+
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: results,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: Number('${{ steps.find_pr.outputs.result }}'),
+                body: results,
+              });
+            }
+
+      - name: Fail if benchmarks failed
+        if: steps.find_pr.outputs.result != '' && steps.benchmarks.outcome == 'failure'
+        run: exit 1
