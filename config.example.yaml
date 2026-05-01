@@ -96,6 +96,16 @@ iiif:
     load_access: auto
     # Cache info.json dimensions by identifier plus source mtime/size.
     info_dimension_cache: true
+    # Optional protected route for invalidating all derivative variants for one
+    # identifier: POST {prefix}/{identifier}/cache/invalidate with
+    # Authorization: Bearer ${TRIPLET_IMAGE_CACHE_INVALIDATION_TOKEN}.
+    # If TRIPLET_IMAGE_CACHE_INVALIDATION_TOKEN is unset,
+    # TRIPLET_IMAGE_CACHE_INVALIDATION_TOKEN_FILE may point at a mounted secret
+    # file whose contents populate the token environment variable.
+    # Optionally restrict callers by client CIDR. When Triplet is behind a
+    # proxy, configure logging.trusted_proxy_cidrs so X-Forwarded-For is trusted.
+    # cache_invalidation_allowed_cidrs: [127.0.0.1/32, ::1/128]
+    # cache_invalidation_token: ${TRIPLET_IMAGE_CACHE_INVALIDATION_TOKEN}
   presentation:
     enabled: false
     prefix: /presentation/v3

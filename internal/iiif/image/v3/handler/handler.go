@@ -11,11 +11,13 @@ package handler
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -36,20 +38,23 @@ import (
 
 // Handler serves the Image API 3.0 surface mounted at Prefix.
 type Handler struct {
-	prefix           string
-	publicBaseURL    string
-	src              storage.Opener
-	pipeline         *pipeline.Pipeline
-	derivativeCache  cache.Store
-	cors             cors.Policy
-	infoCacheEnabled bool
-	infoCacheMu      sync.RWMutex
-	infoCache        map[string]cachedDimensions
-	infoLimits       types.Limits
-	maxSourcePixels  int64
-	maxSourceBytes   int64
-	vipsLimiter      chan struct{}
-	logger           *slog.Logger
+	prefix            string
+	publicBaseURL     string
+	src               storage.Opener
+	pipeline          *pipeline.Pipeline
+	derivativeCache   cache.Store
+	cors              cors.Policy
+	invalidationToken string
+	invalidationCIDRs []*net.IPNet
+	trustedProxies    []*net.IPNet
+	infoCacheEnabled  bool
+	infoCacheMu       sync.RWMutex
+	infoCache         map[string]cachedDimensions
+	infoLimits        types.Limits
+	maxSourcePixels   int64
+	maxSourceBytes    int64
+	vipsLimiter       chan struct{}
+	logger            *slog.Logger
 }
 
 type cachedDimensions struct {
@@ -67,7 +72,7 @@ const (
 // New constructs an Image API handler.
 //
 // derivCache may be nil to disable derivative caching.
-func New(prefix, publicBaseURL string, src storage.Opener, pipe *pipeline.Pipeline, derivCache cache.Store, allowedOrigins []string, infoLimits types.Limits, infoCacheEnabled bool, maxSourcePixels, maxSourceBytes int64, maxConcurrentTransforms int, logger *slog.Logger) *Handler {
+func New(prefix, publicBaseURL string, src storage.Opener, pipe *pipeline.Pipeline, derivCache cache.Store, allowedOrigins []string, invalidationToken string, invalidationCIDRs, trustedProxies []*net.IPNet, infoLimits types.Limits, infoCacheEnabled bool, maxSourcePixels, maxSourceBytes int64, maxConcurrentTransforms int, logger *slog.Logger) *Handler {
 	if derivCache == nil {
 		derivCache = cache.Noop{}
 	}
@@ -76,19 +81,22 @@ func New(prefix, publicBaseURL string, src storage.Opener, pipe *pipeline.Pipeli
 		vipsLimiter = make(chan struct{}, maxConcurrentTransforms)
 	}
 	return &Handler{
-		prefix:           strings.TrimRight(prefix, "/"),
-		publicBaseURL:    strings.TrimRight(publicBaseURL, "/"),
-		src:              src,
-		pipeline:         pipe,
-		derivativeCache:  derivCache,
-		cors:             cors.New(allowedOrigins, exposeHeaders),
-		infoCacheEnabled: infoCacheEnabled,
-		infoCache:        map[string]cachedDimensions{},
-		infoLimits:       infoLimits,
-		maxSourcePixels:  maxSourcePixels,
-		maxSourceBytes:   maxSourceBytes,
-		vipsLimiter:      vipsLimiter,
-		logger:           logger,
+		prefix:            strings.TrimRight(prefix, "/"),
+		publicBaseURL:     strings.TrimRight(publicBaseURL, "/"),
+		src:               src,
+		pipeline:          pipe,
+		derivativeCache:   derivCache,
+		cors:              cors.New(allowedOrigins, exposeHeaders),
+		invalidationToken: invalidationToken,
+		invalidationCIDRs: invalidationCIDRs,
+		trustedProxies:    trustedProxies,
+		infoCacheEnabled:  infoCacheEnabled,
+		infoCache:         map[string]cachedDimensions{},
+		infoLimits:        infoLimits,
+		maxSourcePixels:   maxSourcePixels,
+		maxSourceBytes:    maxSourceBytes,
+		vipsLimiter:       vipsLimiter,
+		logger:            logger,
 	}
 }
 
@@ -99,6 +107,9 @@ func (h *Handler) Register(mux *http.ServeMux) {
 
 // ServeHTTP implements http.Handler.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if ok := h.maybeServeCacheInvalidation(w, r); ok {
+		return
+	}
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
@@ -184,6 +195,11 @@ func (h *Handler) serveImage(w http.ResponseWriter, r *http.Request, req parse.R
 	key, cacheable := derivativeKey(req, meta)
 	etag := ""
 	if cacheable {
+		if h.invalidationToken != "" {
+			if version := h.derivativeInvalidationVersion(r.Context(), req.Identifier); version != "" {
+				key += "#invalidate=" + version
+			}
+		}
 		etag = derivativeETag(key)
 		w.Header().Set("ETag", etag)
 		if ifNoneMatchMatches(r.Header.Values("If-None-Match"), etag) {
@@ -390,6 +406,166 @@ func (h *Handler) sourceMeta(ctx context.Context, identifier string) (storage.Me
 	return meta, nil
 }
 
+func (h *Handler) maybeServeCacheInvalidation(w http.ResponseWriter, r *http.Request) bool {
+	identifier, ok, err := h.cacheInvalidationIdentifier(r.URL.EscapedPath())
+	if !ok {
+		return false
+	}
+	h.cors.SetHeaders(w, r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return true
+	}
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return true
+	}
+	if h.invalidationToken == "" {
+		writeError(w, http.StatusNotFound, "not found")
+		return true
+	}
+	if !h.authorizedInvalidation(r) {
+		w.Header().Set("WWW-Authenticate", `Bearer realm="triplet-image-cache"`)
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return true
+	}
+	if !h.clientAllowedToInvalidate(r) {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return true
+	}
+	version := time.Now().UTC().Format(time.RFC3339Nano)
+	if err := h.derivativeCache.Put(r.Context(), invalidationMarkerKey(identifier), "text/plain; charset=utf-8", strings.NewReader(version)); err != nil {
+		h.logger.Error("derivative cache invalidate", "identifier", redact.Identifier(identifier), "identifier_hash", redact.Hash(identifier), "err", err)
+		writeError(w, http.StatusInternalServerError, "failed to invalidate cache")
+		return true
+	}
+	h.infoCacheMu.Lock()
+	delete(h.infoCache, identifier)
+	h.infoCacheMu.Unlock()
+	if invalidator, ok := h.src.(storage.AuthInvalidator); ok {
+		if err := invalidator.InvalidateAuth(r.Context(), identifier); err != nil {
+			h.logger.Warn("source auth cache invalidate", "identifier", redact.Identifier(identifier), "identifier_hash", redact.Hash(identifier), "err", err)
+		}
+	}
+	h.logger.Info("derivative cache invalidated", "identifier", redact.Identifier(identifier), "identifier_hash", redact.Hash(identifier))
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusNoContent)
+	return true
+}
+
+func (h *Handler) cacheInvalidationIdentifier(path string) (string, bool, error) {
+	rest := strings.TrimPrefix(path, h.prefix)
+	if rest == path {
+		return "", false, nil
+	}
+	const suffix = "/cache/invalidate"
+	if !strings.HasSuffix(rest, suffix) {
+		return "", false, nil
+	}
+	raw := strings.TrimSuffix(rest, suffix)
+	raw = strings.TrimPrefix(raw, "/")
+	if raw == "" {
+		return "", true, fmt.Errorf("empty identifier")
+	}
+	identifier, err := url.PathUnescape(raw)
+	if err != nil {
+		return "", true, fmt.Errorf("identifier: %v", err)
+	}
+	if strings.ContainsAny(identifier, "\x00\n\r") {
+		return "", true, fmt.Errorf("identifier contains illegal control character")
+	}
+	return identifier, true, nil
+}
+
+func (h *Handler) authorizedInvalidation(r *http.Request) bool {
+	token := bearerToken(r)
+	if token == "" || h.invalidationToken == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(token), []byte(h.invalidationToken)) == 1
+}
+
+func (h *Handler) clientAllowedToInvalidate(r *http.Request) bool {
+	if len(h.invalidationCIDRs) == 0 {
+		return true
+	}
+	ip := requestClientIP(r, h.trustedProxies)
+	if ip == nil {
+		return false
+	}
+	for _, cidr := range h.invalidationCIDRs {
+		if cidr.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+func bearerToken(r *http.Request) string {
+	auth := r.Header.Get("Authorization")
+	if !strings.HasPrefix(strings.ToLower(auth), "bearer ") {
+		return ""
+	}
+	return strings.TrimSpace(auth[len("Bearer "):])
+}
+
+func requestClientIP(r *http.Request, trustedProxies []*net.IPNet) net.IP {
+	remote := remoteIP(r.RemoteAddr)
+	if ipInCIDRs(remote, trustedProxies) {
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			ip, _, _ := strings.Cut(xff, ",")
+			if parsed := net.ParseIP(strings.TrimSpace(ip)); parsed != nil {
+				return parsed
+			}
+		}
+		if parsed := net.ParseIP(strings.TrimSpace(r.Header.Get("X-Real-IP"))); parsed != nil {
+			return parsed
+		}
+	}
+	return remote
+}
+
+func remoteIP(remoteAddr string) net.IP {
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		host = remoteAddr
+	}
+	return net.ParseIP(strings.TrimSpace(host))
+}
+
+func ipInCIDRs(ip net.IP, cidrs []*net.IPNet) bool {
+	if ip == nil {
+		return false
+	}
+	for _, cidr := range cidrs {
+		if cidr.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+func (h *Handler) derivativeInvalidationVersion(ctx context.Context, identifier string) string {
+	rc, entry, err := h.derivativeCache.Get(ctx, invalidationMarkerKey(identifier))
+	if err != nil {
+		if !errors.Is(err, cache.ErrMiss) {
+			h.logger.Warn("derivative cache invalidation marker get", "identifier", redact.Identifier(identifier), "identifier_hash", redact.Hash(identifier), slog.Any("err", err))
+		}
+		return ""
+	}
+	defer rc.Close()
+	b, err := io.ReadAll(io.LimitReader(rc, 256))
+	if err == nil {
+		if version := strings.TrimSpace(string(b)); version != "" {
+			return version
+		}
+	}
+	if !entry.StoredAt.IsZero() {
+		return entry.StoredAt.UTC().Format(time.RFC3339Nano)
+	}
+	return ""
+}
+
 func (h *Handler) acquireVips(ctx context.Context) (func(), error) {
 	if h.vipsLimiter == nil {
 		return func() {}, nil
@@ -483,6 +659,10 @@ func derivativeKey(req parse.Request, meta storage.Meta) (string, bool) {
 		return key, false
 	}
 	return key + "#source=" + version, true
+}
+
+func invalidationMarkerKey(identifier string) string {
+	return "iiif/3/" + identifier + "/cache/invalidation"
 }
 
 func ifNoneMatchMatches(values []string, etag string) bool {

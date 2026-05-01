@@ -64,6 +64,28 @@ func TestLocalURLFallbackTriesLocalFileBeforeHTTP(t *testing.T) {
 	}
 }
 
+func TestLocalURLFallbackInvalidateAuthClearsIdentifierEntries(t *testing.T) {
+	op := &LocalURLFallback{
+		auth: map[string]authCacheEntry{
+			"one":   {identifier: "sample.png", expiresAt: time.Now().Add(time.Hour)},
+			"two":   {identifier: "other.png", expiresAt: time.Now().Add(time.Hour)},
+			"three": {identifier: "sample.png", expiresAt: time.Now().Add(time.Hour)},
+		},
+	}
+	if err := op.InvalidateAuth(context.Background(), "sample.png"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := op.auth["one"]; ok {
+		t.Fatal("auth entry one was not invalidated")
+	}
+	if _, ok := op.auth["three"]; ok {
+		t.Fatal("auth entry three was not invalidated")
+	}
+	if _, ok := op.auth["two"]; !ok {
+		t.Fatal("unrelated auth entry was invalidated")
+	}
+}
+
 func TestLocalURLFallbackUsesHTTPWhenLocalMissing(t *testing.T) {
 	root := t.TempDir()
 	var httpHits int

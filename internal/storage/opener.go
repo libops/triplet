@@ -68,3 +68,9 @@ type Opener interface {
 type MetaReader interface {
 	Meta(ctx context.Context, identifier string) (Meta, error)
 }
+
+// AuthInvalidator clears cached authorization decisions for an identifier when
+// a backend maintains per-source auth state.
+type AuthInvalidator interface {
+	InvalidateAuth(ctx context.Context, identifier string) error
+}
