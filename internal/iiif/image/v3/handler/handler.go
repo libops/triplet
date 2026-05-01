@@ -235,9 +235,6 @@ func (h *Handler) serveImage(w http.ResponseWriter, r *http.Request, req parse.R
 	contentType := contentTypeForFormat(req.Format)
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("X-Cache", "miss")
-	if r.Method == http.MethodHead {
-		return
-	}
 
 	release, err := h.acquireVips(r.Context())
 	if err != nil {
@@ -304,6 +301,9 @@ func (h *Handler) serveImage(w http.ResponseWriter, r *http.Request, req parse.R
 			writeError(w, http.StatusInternalServerError, "failed to prepare response")
 			return
 		}
+	}
+	if r.Method == http.MethodHead {
+		return
 	}
 	if _, err := io.Copy(w, tmp); err != nil {
 		h.logger.Warn("write derivative", "identifier", redact.Identifier(req.Identifier), "identifier_hash", redact.Hash(req.Identifier), "err", err)

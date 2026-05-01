@@ -96,6 +96,9 @@ func (s *FileStore) Get(_ context.Context, key string) (io.ReadCloser, Entry, er
 // Put implements Store.
 func (s *FileStore) Put(_ context.Context, key, contentType string, value io.Reader) error {
 	dataPath, metaPath := s.paths(key)
+	if err := os.MkdirAll(filepath.Dir(dataPath), 0o750); err != nil {
+		return err
+	}
 	tmp, err := os.CreateTemp(s.Root, ".tmp-*")
 	if err != nil {
 		return err
@@ -142,7 +145,6 @@ func (s *FileStore) paths(key string) (data, meta string) {
 	hex := hex.EncodeToString(sum[:])
 	// Two-level fan-out so a single directory doesn't grow unboundedly.
 	dir := filepath.Join(s.Root, hex[:2], hex[2:4])
-	_ = os.MkdirAll(dir, 0o750)
 	base := filepath.Join(dir, hex)
 	return base, base + ".meta"
 }

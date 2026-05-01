@@ -196,6 +196,46 @@ func TestHTTPOpenerUsesRangeRequests(t *testing.T) {
 	}
 }
 
+func TestHTTPOpenerRejectsMismatchedContentRange(t *testing.T) {
+	body := []byte("0123456789")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rng := r.Header.Get("Range")
+		if rng == "" {
+			t.Fatal("expected range request")
+		}
+		start, end := parseTestRange(t, rng)
+		if end >= int64(len(body)) {
+			end = int64(len(body)) - 1
+		}
+		w.Header().Set("Content-Type", "image/png")
+		if rng == "bytes=0-0" {
+			w.Header().Set("Content-Range", "bytes 0-0/"+strconv.Itoa(len(body)))
+			w.WriteHeader(http.StatusPartialContent)
+			_, _ = w.Write(body[:1])
+			return
+		}
+		w.Header().Set("Content-Range", "bytes 0-"+strconv.FormatInt(end-start, 10)+"/"+strconv.Itoa(len(body)))
+		w.WriteHeader(http.StatusPartialContent)
+		_, _ = w.Write(body[start : end+1])
+	}))
+	defer srv.Close()
+
+	op := NewHTTPOpener([]string{srv.URL}, 5*time.Second, 0)
+	op.AllowPrivateHosts = true
+	rc, _, err := op.Open(context.Background(), srv.URL+"/range")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rc.Close()
+	if _, err := rc.Seek(5, io.SeekStart); err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]byte, 2)
+	if _, err := rc.Read(buf); err == nil || !strings.Contains(err.Error(), "invalid content-range") {
+		t.Fatalf("err = %v, want invalid content-range", err)
+	}
+}
+
 func TestHTTPOpenerMetaUsesHEAD(t *testing.T) {
 	body := []byte("0123456789")
 	var gotMethods []string

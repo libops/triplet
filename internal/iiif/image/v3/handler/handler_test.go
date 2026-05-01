@@ -444,6 +444,23 @@ func TestUpscaleWithoutCaretReturnsBadRequest(t *testing.T) {
 	}
 }
 
+func TestImageHeadValidatesPipeline(t *testing.T) {
+	srv, _ := setupTestServer(t)
+	defer srv.Close()
+	req, err := http.NewRequest(http.MethodHead, srv.URL+"/iiif/3/sample.png/full/201,101/0/default.png", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+}
+
 func TestBadSyntax(t *testing.T) {
 	srv, _ := setupTestServer(t)
 	defer srv.Close()
