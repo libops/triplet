@@ -34,7 +34,7 @@ func TestLocalURLFallbackTriesLocalFileBeforeHTTP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	httpOp := NewHTTPOpener([]string{"127.0.0.1"}, 0, 0)
+	httpOp := NewHTTPOpener([]string{srv.URL}, 0, 0)
 	httpOp.AllowPrivateHosts = true
 	op := &LocalURLFallback{
 		Mappings: []LocalURLMapping{{
@@ -76,7 +76,7 @@ func TestLocalURLFallbackUsesHTTPWhenLocalMissing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	httpOp := NewHTTPOpener([]string{"127.0.0.1"}, 0, 0)
+	httpOp := NewHTTPOpener([]string{srv.URL}, 0, 0)
 	httpOp.AllowPrivateHosts = true
 	op := &LocalURLFallback{
 		Mappings: []LocalURLMapping{{
@@ -115,9 +115,9 @@ func TestLocalURLFallbackUsesAuthenticatedHTTPFallbackForProtectedMiss(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	plainHTTP := NewHTTPOpener([]string{"127.0.0.1"}, 0, 0)
+	plainHTTP := NewHTTPOpener([]string{srv.URL}, 0, 0)
 	plainHTTP.AllowPrivateHosts = true
-	authHTTP := NewHTTPOpener([]string{"127.0.0.1"}, 0, 0)
+	authHTTP := NewHTTPOpener([]string{srv.URL}, 0, 0)
 	authHTTP.AllowPrivateHosts = true
 	authHTTP.ForwardAuthHeaders = true
 	op := &LocalURLFallback{
@@ -177,8 +177,8 @@ func TestLocalURLFallbackSupportsMultipleRoots(t *testing.T) {
 			{Prefix: "/system/files", File: systemOp},
 			{Prefix: "/fedora", File: fedoraOp},
 		},
-		AllowedHosts: []string{"repo.example.edu"},
-		Fallback:     errOpener{},
+		AllowedOrigins: []string{"https://repo.example.edu"},
+		Fallback:       errOpener{},
 	}
 
 	tests := []struct {
@@ -223,8 +223,8 @@ func TestLocalURLFallbackPathOnlyPrefixRequiresAllowedURLHost(t *testing.T) {
 			Prefix: "/system/files",
 			File:   fileOp,
 		}},
-		AllowedHosts: []string{"repo.example.edu"},
-		Fallback:     errOpener{},
+		AllowedOrigins: []string{"https://repo.example.edu"},
+		Fallback:       errOpener{},
 	}
 
 	_, _, err = op.Open(context.Background(), "https://attacker.example/system/files/node/private.jp2")
@@ -250,8 +250,8 @@ func TestLocalURLFallbackPathOnlyPrefixMatchesAllowedURLHost(t *testing.T) {
 			Prefix: "/system/files",
 			File:   fileOp,
 		}},
-		AllowedHosts: []string{"repo.example.edu"},
-		Fallback:     errOpener{},
+		AllowedOrigins: []string{"https://repo.example.edu"},
+		Fallback:       errOpener{},
 	}
 
 	rc, _, err := op.Open(context.Background(), "https://repo.example.edu/system/files/node/private.jp2")
@@ -296,9 +296,9 @@ func TestLocalURLFallbackPathOnlyPrefixAuthProbeUsesLocalFile(t *testing.T) {
 			File:      fileOp,
 			AuthProbe: true,
 		}},
-		AllowedHosts: []string{"127.0.0.1"},
-		Fallback:     errOpener{},
-		AuthFallback: testAuthHTTP(t, srv),
+		AllowedOrigins: []string{srv.URL},
+		Fallback:       errOpener{},
+		AuthFallback:   testAuthHTTP(t, srv),
 	}
 	identifier := srv.URL + "/system/files/" + localPath
 
@@ -356,9 +356,9 @@ func TestLocalURLFallbackPathOnlyPrefixMetaAuthProbeUsesLocalFile(t *testing.T) 
 			File:      fileOp,
 			AuthProbe: true,
 		}},
-		AllowedHosts: []string{"127.0.0.1"},
-		Fallback:     errOpener{},
-		AuthFallback: testAuthHTTP(t, srv),
+		AllowedOrigins: []string{srv.URL},
+		Fallback:       errOpener{},
+		AuthFallback:   testAuthHTTP(t, srv),
 	}
 
 	meta, err := op.Meta(context.Background(), srv.URL+"/system/files/"+localPath)
@@ -415,9 +415,9 @@ func TestLocalURLFallbackPathOnlyPrefixAuthProbeStatusControlsLocalRead(t *testi
 					File:      fileOp,
 					AuthProbe: true,
 				}},
-				AllowedHosts: []string{"127.0.0.1"},
-				Fallback:     errOpener{},
-				AuthFallback: testAuthHTTP(t, srv),
+				AllowedOrigins: []string{srv.URL},
+				Fallback:       errOpener{},
+				AuthFallback:   testAuthHTTP(t, srv),
 			}
 
 			rc, _, err := op.Open(context.Background(), srv.URL+"/system/files/"+localPath)
@@ -477,9 +477,9 @@ func TestLocalURLFallbackAnonymousAuthProbeTTL(t *testing.T) {
 				AuthProbe:             true,
 				AuthAnonymousCacheTTL: ttl,
 			}},
-			AllowedHosts: []string{"repo.example.edu"},
-			Fallback:     errOpener{},
-			AuthFallback: fakeAuthHTTP(prober),
+			AllowedOrigins: []string{"https://repo.example.edu"},
+			Fallback:       errOpener{},
+			AuthFallback:   fakeAuthHTTP(prober),
 		}
 		identifier := "https://repo.example.edu/system/files/private.jp2"
 
@@ -534,9 +534,9 @@ func TestLocalURLFallbackAuthenticatedAuthProbeTTL(t *testing.T) {
 				AuthAnonymousCacheTTL:     anonTTL,
 				AuthAuthenticatedCacheTTL: authTTL,
 			}},
-			AllowedHosts: []string{"repo.example.edu"},
-			Fallback:     errOpener{},
-			AuthFallback: fakeAuthHTTP(prober),
+			AllowedOrigins: []string{"https://repo.example.edu"},
+			Fallback:       errOpener{},
+			AuthFallback:   fakeAuthHTTP(prober),
 		}
 		ctx := ContextWithAuthHeaders(context.Background(), http.Header{
 			"Cookie": []string{"SESS=abc"},
@@ -883,7 +883,7 @@ func TestLocalURLFallbackAuthProbeUsesHTTPPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	denied := NewHTTPOpener([]string{"example.org"}, 0, 0)
+	denied := NewHTTPOpener([]string{"https://example.org"}, 0, 0)
 	denied.AllowPrivateHosts = true
 	op := &LocalURLFallback{
 		Mappings: []LocalURLMapping{{
@@ -916,7 +916,7 @@ func TestLocalURLFallbackMetaUsesAuthenticatedHTTPMetadataFallback(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	authHTTP := NewHTTPOpener([]string{"127.0.0.1"}, 0, 0)
+	authHTTP := NewHTTPOpener([]string{srv.URL}, 0, 0)
 	authHTTP.AllowPrivateHosts = true
 	authHTTP.ForwardAuthHeaders = true
 	op := &LocalURLFallback{
@@ -1127,7 +1127,7 @@ func (f *fakeAuthProbeTransport) RoundTrip(r *http.Request) (*http.Response, err
 }
 
 func fakeAuthHTTP(rt http.RoundTripper) *HTTPOpener {
-	op := NewHTTPOpener([]string{"repo.example.edu"}, 0, 0)
+	op := NewHTTPOpener([]string{"https://repo.example.edu"}, 0, 0)
 	op.Client = &http.Client{Transport: rt}
 	op.ForwardAuthHeaders = true
 	return op
@@ -1135,7 +1135,7 @@ func fakeAuthHTTP(rt http.RoundTripper) *HTTPOpener {
 
 func testAuthHTTP(t *testing.T, srv *httptest.Server) *HTTPOpener {
 	t.Helper()
-	op := NewHTTPOpener([]string{"127.0.0.1"}, 0, 0)
+	op := NewHTTPOpener([]string{srv.URL}, 0, 0)
 	op.AllowPrivateHosts = true
 	op.ForwardAuthHeaders = true
 	return op

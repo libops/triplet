@@ -16,10 +16,21 @@ logging:
   level: info
   # One of: json, text.
   format: json
+  # Triplet trusts X-Forwarded-For and X-Real-IP only when RemoteAddr is inside
+  # one of these proxy CIDRs.
+  trusted_proxy_cidrs:
+  # - 10.0.0.0/8
+
+metrics:
+  # Exposes Prometheus metrics at /metrics on the main listener. Disabled by
+  # default; enable only behind a scrape path that is not publicly reachable.
+  enabled: false
 
 debug:
+  # pprof is mounted on the main listener and requires pprof_token when enabled.
   pprof_enabled: false
   pprof_prefix: /debug/pprof
+  pprof_token: "${TRIPLET_PPROF_TOKEN}"
 
 vips:
   # 0 lets libvips choose based on available cores.
@@ -42,8 +53,8 @@ vips:
 
 iiif:
   # Optional shared CORS allowlist for IIIF Presentation, Search, Auth, and
-  # Image unless iiif.image.allowed_origins is set. Entries can be full origins
-  # (`https://viewer.example.edu`), hostnames (`viewer.example.edu`), or `*`.
+  # Image unless iiif.image.allowed_origins is set. Entries must be exact
+  # origins (`https://viewer.example.edu`) or `*`.
   # When empty, no Access-Control-Allow-Origin header is emitted.
   # allowed_origins:
   #   - https://viewer.example.edu
@@ -149,14 +160,14 @@ sources:
   #
   # SECURITY: this allowlist is the main boundary for remote source images.
   # Triplet passes fetched source bytes to libvips, so keep this list to the
-  # exact trusted upstream hostnames that may supply source images. Redirects
-  # are checked against the same list. An empty list denies all HTTP sources;
-  # `*` allows any host and is only appropriate for closed internal networks.
+  # exact trusted upstream origins that may supply source images. Redirects are
+  # checked against the same list. An empty list denies all HTTP sources and
+  # wildcards are rejected.
   # Private, loopback, link-local, and metadata addresses are blocked unless
   # allow_private_hosts is explicitly enabled. Source caching does not bypass
   # these checks.
   # http:
-  #   allowed_hosts: [islandora-stage.lib.lehigh.edu]
+  #   allowed_origins: [https://islandora-stage.lib.lehigh.edu]
   #   allow_private_hosts: false
   #   request_timeout: 2m
   #   max_bytes: 52428800

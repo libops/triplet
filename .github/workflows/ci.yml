@@ -14,17 +14,25 @@ jobs:
         uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
         with:
           go-version: ">=1.26.2"
+          cache-dependency-path: go.sum
 
-      - name: Cache Go tools
+      - name: Cache Go tool binaries
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: ~/go/bin
+          key: ${{ runner.os }}-go-bin-${{ hashFiles('go.sum', 'Makefile') }}
+          restore-keys: |
+            ${{ runner.os }}-go-bin-
+
+      - name: Cache container Go test state
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-            ~/go/bin
-          key: ${{ runner.os }}-golang-${{ hashFiles('go.sum', 'Makefile') }}
+            .cache/go-build
+            .cache/go-mod
+          key: ${{ runner.os }}-container-go-${{ hashFiles('go.sum', 'Dockerfile', 'scripts/test.sh', 'scripts/go-test-container.sh') }}
           restore-keys: |
-            ${{ runner.os }}-golang-
+            ${{ runner.os }}-container-go-
 
       - name: Install cgo dependencies
         run: |
@@ -40,10 +48,28 @@ jobs:
       - name: lint
         run: make lint
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3
+
+      - name: Build cached test runner
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6
+        with:
+          context: .
+          file: ./Dockerfile
+          target: test-runner
+          load: true
+          tags: triplet-test:dev
+          cache-from: type=gha,scope=triplet-test-runner-${{ runner.os }}
+          cache-to: type=gha,scope=triplet-test-runner-${{ runner.os }},mode=max
+
       - name: test
+        env:
+          TRIPLET_TEST_SKIP_BUILD: "1"
         run: make test-race
 
       - name: asan
+        env:
+          TRIPLET_TEST_SKIP_BUILD: "1"
         run: make test-asan
 
   push-images:
@@ -67,12 +93,46 @@ jobs:
         shell: bash
         run: echo "GIT_BRANCH=${GITHUB_REF_NAME//\//-}" >> "$GITHUB_ENV"
 
+      - name: Cache container Go test state
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: |
+            .cache/go-build
+            .cache/go-mod
+          key: ${{ runner.os }}-container-go-${{ hashFiles('go.sum', 'Dockerfile', 'scripts/test.sh', 'scripts/go-test-container.sh') }}
+          restore-keys: |
+            ${{ runner.os }}-container-go-
+
+      - name: Cache IIIF validator
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: .cache/iiif-validator
+          key: ${{ runner.os }}-iiif-validator-${{ hashFiles('scripts/ensure-iiif-validator.sh') }}
+          restore-keys: |
+            ${{ runner.os }}-iiif-validator-
+
       - name: Install conformance dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libmagic1 python3-venv
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3
+
+      - name: Build cached test runner
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6
+        with:
+          context: .
+          file: ./Dockerfile
+          target: test-runner
+          load: true
+          tags: triplet-test:dev
+          cache-from: type=gha,scope=triplet-test-runner-${{ runner.os }}
+          cache-to: type=gha,scope=triplet-test-runner-${{ runner.os }},mode=max
+
       - name: integration tests
+        env:
+          TRIPLET_TEST_SKIP_BUILD: "1"
         run: make test-integration
 
       - name: Show compose logs on failure

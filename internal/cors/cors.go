@@ -3,7 +3,6 @@ package cors
 
 import (
 	"net/http"
-	"net/url"
 	"strings"
 )
 
@@ -54,17 +53,9 @@ func (p Policy) originAllowed(origin string) bool {
 	if p.allowsAnyOrigin() {
 		return true
 	}
-	parsed, err := url.Parse(origin)
-	host := ""
-	if err == nil {
-		host = parsed.Hostname()
-	}
 	for _, allowed := range p.AllowedOrigins {
 		allowed = strings.TrimSpace(allowed)
 		if allowed == origin {
-			return true
-		}
-		if host != "" && strings.EqualFold(allowed, host) {
 			return true
 		}
 	}

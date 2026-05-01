@@ -46,10 +46,10 @@ sources:
     root: /var/lib/triplet/images
   # Enable only when this deployment should fetch remote source images.
   # The allowlist is the security boundary for HTTP identifiers: redirects are
-  # rechecked, an empty list denies all hosts, and `*` should only be used on
-  # closed internal networks.
+  # rechecked, entries are exact origins, and an empty list denies all HTTP
+  # sources.
   # http:
-  #   allowed_hosts: [images.example.org]
+  #   allowed_origins: [https://images.example.org]
   #   allow_private_hosts: false
   #   request_timeout: 2m
   #   max_bytes: 52428800

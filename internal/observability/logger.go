@@ -3,6 +3,9 @@ package observability
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/binary"
+	"encoding/hex"
 	"log/slog"
 	"net"
 	"net/http"
@@ -16,6 +19,13 @@ import (
 type ctxKey int
 
 const requestIDKey ctxKey = iota
+
+// LoggingOptions controls request log attribution behavior.
+type LoggingOptions struct {
+	// TrustedProxies allows X-Forwarded-For and X-Real-IP to supply client_ip
+	// only when RemoteAddr is inside one of these CIDR ranges.
+	TrustedProxies []*net.IPNet
+}
 
 // NewLogger builds a slog.Logger from the configured level and format.
 //
@@ -54,7 +64,11 @@ func RequestID(ctx context.Context) string {
 // LoggingMiddleware logs one structured line per HTTP request, including the
 // status code, byte count, latency, and request ID. The request ID comes from
 // an inbound X-Request-Id header or is generated.
-func LoggingMiddleware(logger *slog.Logger) func(http.Handler) http.Handler {
+func LoggingMiddleware(logger *slog.Logger, opts ...LoggingOptions) func(http.Handler) http.Handler {
+	cfg := LoggingOptions{}
+	if len(opts) > 0 {
+		cfg = opts[0]
+	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
@@ -72,7 +86,7 @@ func LoggingMiddleware(logger *slog.Logger) func(http.Handler) http.Handler {
 				slog.String("request_id", rid),
 				slog.String("method", r.Method),
 				slog.String("path", redact.Path(r.URL.Path)),
-				slog.String("client_ip", clientIP(r)),
+				slog.String("client_ip", clientIP(r, cfg.TrustedProxies)),
 				slog.String("user_agent", r.UserAgent()),
 				slog.Int("status", ww.status),
 				slog.Int64("bytes", ww.bytes),
@@ -118,31 +132,50 @@ func (s *statusRecorder) Write(b []byte) (int, error) {
 	return n, err
 }
 
-func clientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		ip, _, _ := strings.Cut(xff, ",")
-		if ip = strings.TrimSpace(ip); ip != "" {
+func clientIP(r *http.Request, trustedProxies []*net.IPNet) string {
+	remote := remoteIP(r.RemoteAddr)
+	if trustedProxy(remote, trustedProxies) {
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			ip, _, _ := strings.Cut(xff, ",")
+			if ip = strings.TrimSpace(ip); ip != "" {
+				return ip
+			}
+		}
+		if ip := strings.TrimSpace(r.Header.Get("X-Real-IP")); ip != "" {
 			return ip
 		}
 	}
-	if ip := strings.TrimSpace(r.Header.Get("X-Real-IP")); ip != "" {
-		return ip
-	}
-	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
-		return host
+	if remote != nil {
+		return remote.String()
 	}
 	return r.RemoteAddr
 }
 
-func newRequestID() string {
-	// 8 bytes of crypto/rand-style uniqueness without pulling crypto/rand into
-	// the hot path: time-based hex is sufficient for log correlation.
-	now := time.Now().UnixNano()
-	const hex = "0123456789abcdef"
-	out := make([]byte, 16)
-	for i := 0; i < 16; i++ {
-		out[15-i] = hex[now&0xf]
-		now >>= 4
+func remoteIP(remoteAddr string) net.IP {
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		host = remoteAddr
 	}
-	return string(out)
+	return net.ParseIP(strings.TrimSpace(host))
+}
+
+func trustedProxy(ip net.IP, cidrs []*net.IPNet) bool {
+	if ip == nil {
+		return false
+	}
+	for _, cidr := range cidrs {
+		if cidr.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+func newRequestID() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err == nil {
+		return hex.EncodeToString(b[:])
+	}
+	binary.BigEndian.PutUint64(b[8:], uint64(time.Now().UnixNano()))
+	return hex.EncodeToString(b[:])
 }

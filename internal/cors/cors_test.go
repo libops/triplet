@@ -7,7 +7,7 @@ import (
 )
 
 func TestPolicySetHeadersAllowsHost(t *testing.T) {
-	p := New([]string{"viewer.example.edu"}, "ETag")
+	p := New([]string{"https://viewer.example.edu"}, "ETag")
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.Header.Set("Origin", "https://viewer.example.edu")
 	rec := httptest.NewRecorder()
@@ -42,9 +42,22 @@ func TestPolicySetHeadersAllowsWildcard(t *testing.T) {
 }
 
 func TestPolicySetHeadersRejectsDisallowedOrigin(t *testing.T) {
-	p := New([]string{"viewer.example.edu"}, "")
+	p := New([]string{"https://viewer.example.edu"}, "")
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.Header.Set("Origin", "https://other.example.edu")
+	rec := httptest.NewRecorder()
+
+	p.SetHeaders(rec, req)
+
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Fatalf("Access-Control-Allow-Origin = %q", got)
+	}
+}
+
+func TestPolicySetHeadersRejectsHostOriginWithUnexpectedPort(t *testing.T) {
+	p := New([]string{"https://viewer.example.edu"}, "")
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Origin", "https://viewer.example.edu:8443")
 	rec := httptest.NewRecorder()
 
 	p.SetHeaders(rec, req)

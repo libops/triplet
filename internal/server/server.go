@@ -4,9 +4,11 @@ package server
 
 import (
 	"context"
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/pprof"
 	"strings"
@@ -49,9 +51,14 @@ func Build(cfg *config.Config, logger *slog.Logger) (*http.Server, error) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
-	mux.Handle("GET /metrics", metrics.Handler())
+	if cfg.Metrics.Enabled {
+		mux.Handle("GET /metrics", metrics.Handler())
+	}
 	if cfg.Debug.PprofEnabled {
-		registerPprof(mux, cfg.Debug.PprofPrefix)
+		if cfg.Debug.PprofToken == "" {
+			return nil, errors.New("debug.pprof_token is required when debug.pprof_enabled = true")
+		}
+		registerPprof(mux, cfg.Debug.PprofPrefix, cfg.Debug.PprofToken)
 		logger.Info("pprof enabled", "prefix", cfg.Debug.PprofPrefix)
 	}
 
@@ -135,7 +142,13 @@ func Build(cfg *config.Config, logger *slog.Logger) (*http.Server, error) {
 
 	var handler http.Handler = mux
 	handler = metrics.Middleware(handler)
-	handler = observability.LoggingMiddleware(logger)(handler)
+	trustedProxies, err := trustedProxyCIDRs(cfg.Logging.TrustedProxyCIDRs)
+	if err != nil {
+		return nil, err
+	}
+	handler = observability.LoggingMiddleware(logger, observability.LoggingOptions{
+		TrustedProxies: trustedProxies,
+	})(handler)
 	handler = observability.RecoverMiddleware(logger)(handler)
 
 	srv := &http.Server{
@@ -160,14 +173,44 @@ func imageAllowedOrigins(cfg *config.Config) []string {
 	return cfg.IIIF.AllowedOrigins
 }
 
-func registerPprof(mux *http.ServeMux, prefix string) {
+func registerPprof(mux *http.ServeMux, prefix, token string) {
 	prefix = strings.TrimRight(prefix, "/")
-	mux.HandleFunc("GET "+prefix+"/", pprof.Index)
-	mux.HandleFunc("GET "+prefix+"/{name}", pprof.Index)
-	mux.HandleFunc("GET "+prefix+"/cmdline", pprof.Cmdline)
-	mux.HandleFunc("GET "+prefix+"/profile", pprof.Profile)
-	mux.HandleFunc("GET "+prefix+"/symbol", pprof.Symbol)
-	mux.HandleFunc("GET "+prefix+"/trace", pprof.Trace)
+	mux.HandleFunc("GET "+prefix+"/", pprofHandler(token, pprof.Index))
+	mux.HandleFunc("GET "+prefix+"/{name}", pprofHandler(token, pprof.Index))
+	mux.HandleFunc("GET "+prefix+"/cmdline", pprofHandler(token, pprof.Cmdline))
+	mux.HandleFunc("GET "+prefix+"/profile", pprofHandler(token, pprof.Profile))
+	mux.HandleFunc("GET "+prefix+"/symbol", pprofHandler(token, pprof.Symbol))
+	mux.HandleFunc("GET "+prefix+"/trace", pprofHandler(token, pprof.Trace))
+}
+
+func pprofHandler(token string, next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		auth := r.Header.Get("Authorization")
+		if !strings.HasPrefix(strings.ToLower(auth), "bearer ") {
+			w.Header().Set("WWW-Authenticate", `Bearer realm="triplet-pprof"`)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		got := strings.TrimSpace(auth[len("Bearer "):])
+		if got == "" || subtle.ConstantTimeCompare([]byte(got), []byte(token)) != 1 {
+			w.Header().Set("WWW-Authenticate", `Bearer realm="triplet-pprof"`)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		next(w, r)
+	}
+}
+
+func trustedProxyCIDRs(raw []string) ([]*net.IPNet, error) {
+	cidrs := make([]*net.IPNet, 0, len(raw))
+	for _, value := range raw {
+		_, cidr, err := net.ParseCIDR(value)
+		if err != nil {
+			return nil, fmt.Errorf("logging.trusted_proxy_cidrs: invalid CIDR %q: %w", value, err)
+		}
+		cidrs = append(cidrs, cidr)
+	}
+	return cidrs, nil
 }
 
 func buildPresentationStore(cfg *config.Config) (presstore.Store, func(), error) {
@@ -224,13 +267,13 @@ func buildSource(cfg *config.Config, logger *slog.Logger) (storage.Opener, func(
 	var httpOp storage.Opener
 	if cfg.Sources.HTTP != nil {
 		op := storage.NewHTTPOpener(
-			cfg.Sources.HTTP.AllowedHosts,
+			cfg.Sources.HTTP.AllowedOrigins,
 			cfg.Sources.HTTP.RequestTimeout,
 			cfg.Sources.HTTP.MaxBytes,
 		)
 		op.AllowPrivateHosts = cfg.Sources.HTTP.AllowPrivateHosts
 		authOp := storage.NewHTTPOpener(
-			cfg.Sources.HTTP.AllowedHosts,
+			cfg.Sources.HTTP.AllowedOrigins,
 			cfg.Sources.HTTP.RequestTimeout,
 			cfg.Sources.HTTP.MaxBytes,
 		)
@@ -264,11 +307,11 @@ func buildSource(cfg *config.Config, logger *slog.Logger) (storage.Opener, func(
 		}
 		if len(localURLMappings) > 0 {
 			httpOp = &storage.LocalURLFallback{
-				Mappings:     localURLMappings,
-				AllowedHosts: cfg.Sources.HTTP.AllowedHosts,
-				Fallback:     httpOp,
-				Logger:       logger,
-				AuthFallback: authOp,
+				Mappings:       localURLMappings,
+				AllowedOrigins: cfg.Sources.HTTP.AllowedOrigins,
+				Fallback:       httpOp,
+				Logger:         logger,
+				AuthFallback:   authOp,
 			}
 		}
 	}

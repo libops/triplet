@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -21,14 +20,13 @@ import (
 // BasicLookupStrategy: the IIIF identifier is the URL-encoded source URL,
 // e.g. /iiif/3/{urlencoded-https-url}/info.json.
 //
-// AllowedHosts gates which upstream hosts may be fetched. An empty list
-// means "fetch nothing"; "*" means "any host" (only set this for closed
-// internal deployments).
+// AllowedOrigins gates which upstream origins may be fetched. An empty list
+// means "fetch nothing". Entries must be exact http(s) origins.
 type HTTPOpener struct {
-	Client       *http.Client
-	AllowedHosts []string
-	UserAgent    string
-	MaxBytes     int64
+	Client         *http.Client
+	AllowedOrigins []string
+	UserAgent      string
+	MaxBytes       int64
 	// AllowPrivateHosts permits loopback, link-local, private, and other
 	// non-public upstream addresses. Keep false for public deployments.
 	AllowPrivateHosts bool
@@ -40,14 +38,14 @@ type HTTPOpener struct {
 const DefaultRequestTimeout = 2 * time.Minute
 
 // NewHTTPOpener constructs an HTTPOpener with sane timeouts.
-func NewHTTPOpener(allowedHosts []string, requestTimeout time.Duration, maxBytes int64) *HTTPOpener {
+func NewHTTPOpener(allowedOrigins []string, requestTimeout time.Duration, maxBytes int64) *HTTPOpener {
 	if requestTimeout == 0 {
 		requestTimeout = DefaultRequestTimeout
 	}
 	h := &HTTPOpener{
-		AllowedHosts: allowedHosts,
-		UserAgent:    "triplet/0.1 (+https://github.com/libops/triplet)",
-		MaxBytes:     maxBytes,
+		AllowedOrigins: allowedOrigins,
+		UserAgent:      "triplet/0.1 (+https://github.com/libops/triplet)",
+		MaxBytes:       maxBytes,
 	}
 	h.Client = &http.Client{Timeout: requestTimeout}
 	return h
@@ -181,8 +179,8 @@ func (h *HTTPOpener) parseTarget(identifier string) (*url.URL, error) {
 	if err != nil || (target.Scheme != "http" && target.Scheme != "https") {
 		return nil, fmt.Errorf("%w: identifier must be an http(s) URL", ErrNotFound)
 	}
-	if !h.hostAllowed(target.Hostname()) {
-		return nil, fmt.Errorf("%w: host %q not in allow-list", ErrNotFound, target.Hostname())
+	if !h.originAllowed(target) {
+		return nil, fmt.Errorf("%w: origin %q not in allow-list", ErrNotFound, urlOrigin(target))
 	}
 	return target, nil
 }
@@ -292,16 +290,29 @@ func (h *HTTPOpener) dialPublicContext(ctx context.Context, network, address str
 	if err != nil {
 		return nil, err
 	}
-	for _, addr := range ips {
-		if privateAddressBlocked(addr.IP) {
-			return nil, fmt.Errorf("%w: host %q resolves to non-public address %s", ErrNotFound, host, addr.IP)
-		}
+	if len(ips) == 0 {
+		return nil, fmt.Errorf("%w: no addresses for host %q", ErrNotFound, host)
 	}
 	dialer := &net.Dialer{
 		Timeout:   30 * time.Second,
 		KeepAlive: 30 * time.Second,
 	}
-	return dialer.DialContext(ctx, network, net.JoinHostPort(host, port))
+	var lastErr error
+	for _, addr := range ips {
+		if privateAddressBlocked(addr.IP) {
+			lastErr = fmt.Errorf("%w: host %q resolves to non-public address %s", ErrNotFound, host, addr.IP)
+			continue
+		}
+		conn, err := dialer.DialContext(ctx, network, net.JoinHostPort(addr.IP.String(), port))
+		if err == nil {
+			return conn, nil
+		}
+		lastErr = err
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("%w: no public addresses for host %q", ErrNotFound, host)
+	}
+	return nil, lastErr
 }
 
 func (h *HTTPOpener) checkRedirect(req *http.Request, via []*http.Request) error {
@@ -311,8 +322,8 @@ func (h *HTTPOpener) checkRedirect(req *http.Request, via []*http.Request) error
 	if req.URL.Scheme != "http" && req.URL.Scheme != "https" {
 		return fmt.Errorf("%w: redirect scheme %q not allowed", ErrNotFound, req.URL.Scheme)
 	}
-	if !h.hostAllowed(req.URL.Hostname()) {
-		return fmt.Errorf("%w: redirect host %q not in allow-list", ErrNotFound, req.URL.Hostname())
+	if !h.originAllowed(req.URL) {
+		return fmt.Errorf("%w: redirect origin %q not in allow-list", ErrNotFound, urlOrigin(req.URL))
 	}
 	return nil
 }
@@ -353,20 +364,24 @@ func parseContentRangeSize(v string) (int64, bool) {
 	return n, err == nil && n >= 0
 }
 
-func (h *HTTPOpener) hostAllowed(host string) bool {
-	if len(h.AllowedHosts) == 0 {
+func (h *HTTPOpener) originAllowed(u *url.URL) bool {
+	if len(h.AllowedOrigins) == 0 {
 		return false
 	}
-	host = strings.ToLower(strings.TrimSpace(host))
-	if slices.Contains(h.AllowedHosts, "*") {
-		return true
-	}
-	for _, allowed := range h.AllowedHosts {
-		if strings.ToLower(strings.TrimSpace(allowed)) == host {
+	origin := urlOrigin(u)
+	for _, allowed := range h.AllowedOrigins {
+		if strings.EqualFold(strings.TrimSpace(allowed), origin) {
 			return true
 		}
 	}
 	return false
+}
+
+func urlOrigin(u *url.URL) string {
+	if u == nil {
+		return ""
+	}
+	return strings.ToLower(u.Scheme) + "://" + strings.ToLower(u.Host)
 }
 
 func privateAddressBlocked(ip net.IP) bool {
