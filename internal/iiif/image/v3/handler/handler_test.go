@@ -211,7 +211,7 @@ func TestImageRequestHasCanonicalLink(t *testing.T) {
 	}
 }
 
-func TestPipelineErrorUsesGenericResponse(t *testing.T) {
+func TestUnsupportedSourceUsesClientError(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "bad.png"), []byte("not an image"), 0o600); err != nil {
 		t.Fatal(err)
@@ -248,15 +248,68 @@ func TestPipelineErrorUsesGenericResponse(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusInternalServerError {
+	if resp.StatusCode != http.StatusUnsupportedMediaType {
 		t.Fatalf("status = %d", resp.StatusCode)
 	}
 	b, err := io.ReadAll(resp.Body)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(b), "vips") || !strings.Contains(string(b), "failed to transform image") {
+	if strings.Contains(string(b), "vips") || !strings.Contains(string(b), "unsupported source image") {
 		t.Fatalf("body = %q", string(b))
+	}
+}
+
+func TestInfoUnsupportedSourceUsesClientError(t *testing.T) {
+	var logs bytes.Buffer
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "bad.tiff"), []byte("not an image"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	op, err := storage.NewFileOpener(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	h := New(
+		"/iiif/3",
+		"http://example.test",
+		op,
+		pipeline.New(op, pipeline.Limits{MaxOutputPixels: 10_000_000}),
+		cache.Noop{},
+		nil,
+		"",
+		nil,
+		nil,
+		types.Limits{MaxArea: 10_000_000},
+		true,
+		250_000_000,
+		1<<30,
+		2,
+		logger,
+	)
+	mux := http.NewServeMux()
+	h.Register(mux)
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/iiif/3/bad.tiff/info.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnsupportedMediaType {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "vips") || !strings.Contains(string(b), "unsupported source image") {
+		t.Fatalf("body = %q", string(b))
+	}
+	if strings.Contains(logs.String(), "read image dimensions") {
+		t.Fatalf("logs = %q", logs.String())
 	}
 }
 

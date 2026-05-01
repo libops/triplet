@@ -152,6 +152,10 @@ func (h *Handler) serveInfo(w http.ResponseWriter, r *http.Request, identifier s
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		if errors.Is(err, pipeline.ErrUnsupportedSource) {
+			writeError(w, http.StatusUnsupportedMediaType, "unsupported source image")
+			return
+		}
 		h.logger.Error("read image dimensions", "identifier", redact.Identifier(identifier), "identifier_hash", redact.Hash(identifier), "err", err)
 		writeError(w, http.StatusInternalServerError, "failed to read image")
 		return
@@ -267,6 +271,10 @@ func (h *Handler) serveImage(w http.ResponseWriter, r *http.Request, req parse.R
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		if errors.Is(err, pipeline.ErrUnsupportedSource) {
+			writeError(w, http.StatusUnsupportedMediaType, "unsupported source image")
+			return
+		}
 		h.logger.Error("pipeline transform", "identifier", redact.Identifier(req.Identifier), "identifier_hash", redact.Hash(req.Identifier), "err", err)
 		writeError(w, http.StatusInternalServerError, "failed to transform image")
 		return
@@ -358,6 +366,7 @@ func (h *Handler) imageDimensions(ctx context.Context, identifier string) (int, 
 	params.Access.Set(gv.AccessSequential)
 	img, err := gv.LoadImageFromFileDirect(path, params)
 	if err != nil {
+		err = pipeline.WrapSourceLoadError("load", err)
 		return 0, 0, fmt.Errorf("vips load %q size=%d content_type=%q mod_time=%s: %w", path, meta.Size, meta.ContentType, meta.ModTime.Format(time.RFC3339Nano), err)
 	}
 	defer img.Close()
