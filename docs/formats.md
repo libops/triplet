@@ -12,16 +12,14 @@ iiif:
     prefix: /iiif/3
     max_output_pixels: 100000000
     max_source_pixels: 250000000
-    max_source_bytes: 1073741824
-    max_derivative_bytes: 536870912
+    max_source_bytes: 1GiB
+    max_derivative_bytes: 512MiB
     color_management: preserve
     load_access: auto
 ```
 
 Source backends determine where identifiers resolve from. A file source is the
-default; HTTP and GCS sources can be added for URL and bucket-backed
-identifiers. The GCS backend is implemented but has not yet been
-deployment-tested.
+default; HTTP sources can be added for URL identifiers.
 
 ```yaml
 sources:
@@ -31,10 +29,6 @@ sources:
   http:
     allowed_origins:
       - https://repository.example.edu
-  gcs:
-    # Implemented, but not deployment-tested yet.
-    bucket_url: gs://my-bucket
-    prefix: images
 ```
 
 | Format | Source / Input | Response / Output | Notes |

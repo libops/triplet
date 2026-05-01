@@ -10,6 +10,10 @@ server:
   public_base_url: "${TRIPLET_PUBLIC_BASE_URL}"
 ```
 
+Byte-size fields accept either raw bytes or unit strings such as `50MiB`,
+`1GiB`, and `500GiB`. Binary units use powers of 1024 (`KiB`, `MiB`, `GiB`);
+decimal units use powers of 1000 (`KB`, `MB`, `GB`).
+
 ## Server
 
 The server section controls the HTTP listener and the public URL used to build
@@ -41,8 +45,8 @@ metrics:
 
 ## IIIF services
 
-The Image API is enabled by default. Presentation, Search, and Auth are
-separate surfaces and can be enabled independently.
+The Image API is enabled by default. Presentation is a separate surface and can
+be enabled independently.
 
 ```yaml
 iiif:
@@ -54,13 +58,11 @@ iiif:
   presentation:
     enabled: false
     prefix: /presentation/v3
-  search:
-    enabled: false
-    prefix: /search/v2
-  auth:
-    enabled: false
-    prefix: /auth/v2
 ```
+
+When Presentation is enabled, Triplet exposes `ETag` through CORS so browser
+annotation editors can read it and send optimistic-concurrency writes with
+`If-Match`.
 
 ## Image safety limits
 
@@ -74,8 +76,8 @@ iiif:
     max_output_pixels: 100000000
     allow_unsafe_unlimited_output_pixels: false
     max_source_pixels: 250000000
-    max_source_bytes: 1073741824
-    max_derivative_bytes: 536870912
+    max_source_bytes: 1GiB
+    max_derivative_bytes: 512MiB
 ```
 
 `max_output_pixels` is the decoded derivative size limit after the IIIF region,
@@ -88,9 +90,12 @@ pixels for public HTTP deployments.
 `max_source_pixels` rejects sources whose decoded width multiplied by height is
 too large before Triplet transforms them. The default is 250,000,000 pixels.
 `max_source_bytes` applies while Triplet is reading an encoded source that is
-not already available as a local file path. `max_derivative_bytes` applies after
-export and prevents returning very large encoded derivatives. Both byte limits
-default to the values shown above.
+not already available as a local file path.
+
+`max_derivative_bytes` is a per-request encoded response limit. It applies after
+libvips export and prevents returning or caching one unexpectedly large
+derivative response. It is not the total derivative cache budget; `cache.max_bytes`
+controls the aggregate filesystem cache footprint.
 
 ## Image processing
 
@@ -118,8 +123,14 @@ profile or normalizes pixels before encoding the derivative:
 | `normalize` | Optimizes the embedded ICC profile, then converts supported non-sRGB color images to sRGB. Grayscale images remain grayscale. Exported derivatives strip metadata where the codec supports stripping. | Best for web-oriented delivery when predictable browser display is more important than retaining source profiles. It can change pixel values by design, adds conversion cost, and may remove metadata/profiles from derivatives. |
 | `none` | Does not convert color space and asks the encoder to strip metadata where supported. | Best when derivatives should avoid metadata/profile retention but you do not want Triplet to alter pixel values through color conversion. Non-sRGB images remain non-sRGB, so display still depends on client interpretation. |
 
-`load_access: auto` uses random access for region crops and sequential access for
-full-image or resize requests.
+`load_access` controls how libvips reads pixels from disk or spooled source
+files:
+
+| Value | Behavior | When to use |
+|---|---|---|
+| `auto` | Default. Uses random access for region crops and sequential access for full-image or resize requests. | Best production default for mixed IIIF viewer traffic. |
+| `sequential` | Streams source pixels forward. | Useful for profiling whole-image derivatives or source formats where sequential reads are materially cheaper. Poor fit for tile-heavy crop workloads. |
+| `random` | Allows libvips to seek around the source. | Useful for profiling tile and region workloads. Can do unnecessary work for simple full-image derivatives. |
 
 ## Advertised image limits
 
@@ -139,14 +150,13 @@ iiif:
 ## Caching
 
 Cache-related settings, including derivative caches, source caches,
-`info_dimension_cache`, and libvips operation caches are covered in
-[Caching](caching.md). Local URL auth-probe TTLs are covered in
-[Authorization](authorization.md).
+`info_dimension_cache`, local URL auth-probe caching, and libvips operation
+caches are covered in [Caching](caching.md).
 
 ## Source selection
 
-Exactly one source is the default. Additional sources are selected by identifier
-scheme, such as `https://...` or `gs://...`.
+Exactly one source is the default. HTTP sources are selected by URL identifier
+schemes such as `https://...`.
 
 ```yaml
 sources:
@@ -158,11 +168,7 @@ sources:
       - https://repository.example.edu
     allow_private_hosts: false
     request_timeout: 2m
-    max_bytes: 52428800
-  gcs:
-    # Implemented, but not deployment-tested yet.
-    bucket_url: gs://my-bucket
-    prefix: images
+    max_bytes: 50MiB
 ```
 
 ## Local URL mappings
@@ -209,9 +215,22 @@ sources:
       - https://repository.example.edu
     allow_private_hosts: false
     request_timeout: 2m
-    max_bytes: 52428800
+    max_bytes: 50MiB
+    metadata_cache_ttl: 5m
 ```
 
 The HTTP host allowlist is a source-fetch boundary. See
 [Authorization](authorization.md#source-fetch-boundary) for origin, redirect,
 private host, and DNS rebinding behavior.
+
+`metadata_cache_ttl` gives remote URL identifiers the same kind of explicit
+staleness window that local URL auth-probe mappings use. While a remote
+identifier's metadata cache entry is fresh, Triplet can build derivative cache
+keys from cached `ETag`, `Last-Modified`, and size metadata instead of making a
+new upstream `HEAD` or range request before checking the derivative cache. If
+the upstream source changes, disappears, or changes authorization during that
+TTL, Triplet may continue serving the locally cached derivative until the
+metadata entry expires. Local URL mappings with `auth_probe: true` inherit the
+same TTL for anonymous and credentialed auth-probe decisions. Leave the TTL
+unset or `0` when every derivative request must revalidate source metadata and
+every auth-probed local URL request must recheck upstream authorization.

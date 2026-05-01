@@ -1,7 +1,7 @@
 // Package storage resolves IIIF identifiers to readable image bytes.
 //
 // Every Image and Presentation handler routes through an [Opener]. New
-// backends (HTTP, GCS, in-memory uploads) implement the same interface so
+// backends (HTTP and in-memory uploads) implement the same interface so
 // the transform pipeline never sees backend-specific code.
 package storage
 

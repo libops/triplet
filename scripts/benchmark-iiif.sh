@@ -155,15 +155,11 @@ iiif:
     enabled: true
     prefix: /iiif/3
     max_output_pixels: 400000000
-    max_source_bytes: 1073741824
+    max_source_bytes: 1GiB
     color_management: "$TRIPLET_COLOR_MANAGEMENT"
     load_access: "$TRIPLET_LOAD_ACCESS"
     info_dimension_cache: true
   presentation:
-    enabled: false
-  search:
-    enabled: false
-  auth:
     enabled: false
 
 sources:

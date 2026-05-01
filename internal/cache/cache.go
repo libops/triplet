@@ -6,8 +6,7 @@
 //   - Derivative cache stores encoded IIIF responses keyed by
 //     (identifier, region, size, rotation, quality, format).
 //
-// Both layers use the same [Store] interface so backends (file, GCS) are
-// interchangeable.
+// Both layers use the same [Store] interface so backends are interchangeable.
 package cache
 
 import (

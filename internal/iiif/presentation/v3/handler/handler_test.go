@@ -22,6 +22,11 @@ func setupTestServer(t *testing.T) *httptest.Server {
 
 func setupTestServerWithWrites(t *testing.T, writeEnabled bool, writeToken string) *httptest.Server {
 	t.Helper()
+	return setupTestServerWithWritesAndCORS(t, writeEnabled, writeToken, nil)
+}
+
+func setupTestServerWithWritesAndCORS(t *testing.T, writeEnabled bool, writeToken string, allowedOrigins []string) *httptest.Server {
+	t.Helper()
 	root := t.TempDir()
 	itemDir := filepath.Join(root, "item-1")
 	if err := os.MkdirAll(itemDir, 0o755); err != nil {
@@ -44,7 +49,7 @@ func setupTestServerWithWrites(t *testing.T, writeEnabled bool, writeToken strin
 		t.Fatal(err)
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	h := New("/presentation/v3", st, cors.New(nil, ""), writeEnabled, writeToken, logger)
+	h := New("/presentation/v3", st, cors.New(allowedOrigins, "ETag"), writeEnabled, writeToken, logger)
 	mux := http.NewServeMux()
 	h.Register(mux)
 	return httptest.NewServer(mux)
@@ -121,6 +126,30 @@ func TestAnnotationPageHead(t *testing.T) {
 	}
 	if len(b) != 0 {
 		t.Fatalf("expected empty body, got %q", string(b))
+	}
+}
+
+func TestAnnotationPageCORSExposesETag(t *testing.T) {
+	srv := setupTestServerWithWritesAndCORS(t, true, "test-token", []string{"https://editor.example.edu"})
+	defer srv.Close()
+	req, err := http.NewRequest(http.MethodGet, srv.URL+"/presentation/v3/item-1/canvas/canvas-1/annotations", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Origin", "https://editor.example.edu")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if got := resp.Header.Get("Access-Control-Allow-Origin"); got != "https://editor.example.edu" {
+		t.Fatalf("Access-Control-Allow-Origin = %q", got)
+	}
+	if got := resp.Header.Get("Access-Control-Expose-Headers"); got != "ETag" {
+		t.Fatalf("Access-Control-Expose-Headers = %q", got)
+	}
+	if got := resp.Header.Get("ETag"); got == "" {
+		t.Fatal("missing ETag")
 	}
 }
 

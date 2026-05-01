@@ -15,8 +15,7 @@ imported wire types where the server needs stable names or extension fields
 beyond the upstream schemas.
 
 Triplet also tracks extension support in code and tests. In particular, the
-Presentation annotation path validates the IIIF Text Granularity extension, and
-the Search 2.0 route exposes a default no-op Content Search surface.
+Presentation annotation path validates the IIIF Text Granularity extension.
 
 The IIIF API surfaces are configured independently:
 
@@ -31,11 +30,7 @@ iiif:
     root: ./testdata/presentation
     # dsn: scribe:scribe@tcp(mariadb:3306)/scribe?parseTime=true
     write_enabled: false
-  search:
-    enabled: false
-    prefix: /search/v2
-  auth:
-    enabled: false
-    prefix: /auth/v2
-    development_permit_all: false
 ```
+
+Presentation annotation writes use strong ETags and require `If-Match`, and the
+Presentation CORS policy exposes `ETag` for browser-based annotation editors.

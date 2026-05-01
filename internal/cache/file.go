@@ -26,6 +26,10 @@ type FileStore struct {
 	// least-recently-modified entries are evicted on the next Put.
 	MaxBytes int64
 
+	// MaxAge optionally bounds how long entries remain usable after Put.
+	// Expired entries are removed on Get and opportunistically on Put.
+	MaxAge time.Duration
+
 	mu sync.Mutex
 }
 
@@ -39,6 +43,16 @@ func NewFileStore(root string, maxBytes int64) (*FileStore, error) {
 		return nil, fmt.Errorf("cache file mkdir: %w", err)
 	}
 	return &FileStore{Root: abs, MaxBytes: maxBytes}, nil
+}
+
+// NewFileStoreWithMaxAge constructs a FileStore with size and age eviction.
+func NewFileStoreWithMaxAge(root string, maxBytes int64, maxAge time.Duration) (*FileStore, error) {
+	store, err := NewFileStore(root, maxBytes)
+	if err != nil {
+		return nil, err
+	}
+	store.MaxAge = maxAge
+	return store, nil
 }
 
 type fileMeta struct {
@@ -60,6 +74,11 @@ func (s *FileStore) Get(_ context.Context, key string) (io.ReadCloser, Entry, er
 	var m fileMeta
 	if err := json.Unmarshal(mb, &m); err != nil {
 		return nil, Entry{}, fmt.Errorf("cache meta: %w", err)
+	}
+	if s.expired(m.StoredAt, time.Now()) {
+		_ = os.Remove(dataPath)
+		_ = os.Remove(metaPath)
+		return nil, Entry{}, ErrMiss
 	}
 	f, err := os.Open(dataPath)
 	if err != nil {
@@ -104,7 +123,7 @@ func (s *FileStore) Put(_ context.Context, key, contentType string, value io.Rea
 		return err
 	}
 	_ = os.Chtimes(metaPath, storedAt, storedAt)
-	if s.MaxBytes > 0 {
+	if s.MaxAge > 0 || s.MaxBytes > 0 {
 		s.evict()
 	}
 	return nil
@@ -133,11 +152,14 @@ func (s *FileStore) evict() {
 	defer s.mu.Unlock()
 	var total int64
 	type entry struct {
-		path string
-		size int64
-		mod  time.Time
+		path     string
+		metaPath string
+		size     int64
+		mod      time.Time
+		storedAt time.Time
 	}
 	var entries []entry
+	now := time.Now()
 	_ = filepath.WalkDir(s.Root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return nil
@@ -149,11 +171,24 @@ func (s *FileStore) evict() {
 		if err != nil {
 			return nil
 		}
-		entries = append(entries, entry{p, info.Size(), info.ModTime()})
+		storedAt := info.ModTime()
+		metaPath := p + ".meta"
+		if mb, err := os.ReadFile(metaPath); err == nil {
+			var m fileMeta
+			if err := json.Unmarshal(mb, &m); err == nil && !m.StoredAt.IsZero() {
+				storedAt = m.StoredAt
+			}
+		}
+		if s.expired(storedAt, now) {
+			_ = os.Remove(p)
+			_ = os.Remove(metaPath)
+			return nil
+		}
+		entries = append(entries, entry{path: p, metaPath: metaPath, size: info.Size(), mod: info.ModTime(), storedAt: storedAt})
 		total += info.Size()
 		return nil
 	})
-	if total <= s.MaxBytes {
+	if s.MaxBytes <= 0 || total <= s.MaxBytes {
 		return
 	}
 	sort.Slice(entries, func(i, j int) bool {
@@ -167,7 +202,11 @@ func (s *FileStore) evict() {
 			return
 		}
 		_ = os.Remove(e.path)
-		_ = os.Remove(e.path + ".meta")
+		_ = os.Remove(e.metaPath)
 		total -= e.size
 	}
+}
+
+func (s *FileStore) expired(storedAt, now time.Time) bool {
+	return s.MaxAge > 0 && !storedAt.IsZero() && now.Sub(storedAt) > s.MaxAge
 }

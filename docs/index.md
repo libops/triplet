@@ -11,6 +11,12 @@ All image processing is done by [libvips] through [govips].
 docker run -p 8080:8080 ghcr.io/libops/triplet:main
 ```
 
+Then try the bundled sample image:
+
+```bash
+curl http://localhost:8080/iiif/3/sample.png/info.json
+```
+
 Triplet needs a public base URL before generated IIIF identifiers are useful
 outside the container:
 
@@ -36,7 +42,7 @@ iiif:
 - [Caching](caching.md) explains Triplet's cache layers and invalidation behavior.
 - [Format support](formats.md) lists source and response formats.
 - [libvips build](libvips.md) documents the runtime image feature surface.
-- [Deploys](deploys.md) covers deployment notes and storage backends.
+- [Deploys](deploys.md) covers deployment notes and Presentation storage migrations.
 - [Conformance](conformance.md) summarizes IIIF spec integration.
 - [Benchmarks](benchmarks.md) summarizes Triplet performance measurements.
 
