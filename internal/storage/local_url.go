@@ -44,13 +44,12 @@ type LocalURLFallback struct {
 
 // LocalURLMapping maps a URL identifier prefix to a local file source.
 type LocalURLMapping struct {
-	Prefix               string
-	File                 *FileOpener
-	OCFL                 bool
-	AuthProbe            bool
-	AuthCacheTTL         time.Duration
-	AuthErrorCacheMinAge time.Duration
-	AuthCacheMaxEntries  int
+	Prefix              string
+	File                *FileOpener
+	OCFL                bool
+	AuthProbe           bool
+	AuthCacheTTL        time.Duration
+	AuthCacheMaxEntries int
 }
 
 type authCacheEntry struct {
@@ -65,10 +64,9 @@ var errAuthProbeHeadUnsupported = errors.New("auth probe head unsupported")
 type authCacheTier string
 
 const (
-	authCacheTierAnonymous      authCacheTier = "anonymous"
-	authCacheTierAuthenticated  authCacheTier = "authenticated"
-	defaultAuthErrorCacheMinAge               = 5 * time.Minute
-	defaultAuthCacheMaxEntries                = 4096
+	authCacheTierAnonymous     authCacheTier = "anonymous"
+	authCacheTierAuthenticated authCacheTier = "authenticated"
+	defaultAuthCacheMaxEntries               = 4096
 )
 
 // Open implements Opener.
@@ -315,7 +313,7 @@ func (l *LocalURLFallback) authorize(ctx context.Context, identifier string, map
 		}
 		return l.authorizeAuthenticated(ctx, identifier, mapping, headers)
 	}
-	anonErr := l.probeCached(ctx, anonKey, identifier, nil, mapping.anonymousAuthTTL(), mapping.authErrorCacheMinAge(), mapping.authCacheMaxEntries())
+	anonErr := l.probeCached(ctx, anonKey, identifier, nil, mapping.anonymousAuthTTL(), mapping.authCacheMaxEntries())
 	if anonErr == nil || !hasAuthHeaders(headers) {
 		return anonErr
 	}
@@ -330,10 +328,10 @@ func (l *LocalURLFallback) authorizeAuthenticated(ctx context.Context, identifie
 	if err, ok := l.cachedAuth(key); ok {
 		return err
 	}
-	return l.probeCached(ctx, key, identifier, headers, mapping.authenticatedAuthTTL(), mapping.authErrorCacheMinAge(), mapping.authCacheMaxEntries())
+	return l.probeCached(ctx, key, identifier, headers, mapping.authenticatedAuthTTL(), mapping.authCacheMaxEntries())
 }
 
-func (l *LocalURLFallback) probeCached(ctx context.Context, key, identifier string, headers http.Header, ttl, errorMinAge time.Duration, maxEntries int) error {
+func (l *LocalURLFallback) probeCached(ctx context.Context, key, identifier string, headers http.Header, ttl time.Duration, maxEntries int) error {
 	if wait, ok := l.beginAuthProbe(key); ok {
 		l.debug(ctx, "local url auth probe waiting on in-flight probe", identifier, "cache_key", redact.Hash(key))
 		select {
@@ -344,8 +342,8 @@ func (l *LocalURLFallback) probeCached(ctx context.Context, key, identifier stri
 			return ctx.Err()
 		}
 	}
-	respHeader, err := l.probe(ctx, identifier, headers)
-	cacheable := cacheableAuthProbeResult(err) && cacheableAuthProbeResponse(err, respHeader, errorMinAge, time.Now())
+	_, err := l.probe(ctx, identifier, headers)
+	cacheable := cacheableAuthProbeResult(err)
 	l.debug(ctx, "local url auth probe completed", identifier, "cache_key", redact.Hash(key), "cacheable", cacheable, "ttl", ttl.String(), "err", err)
 	if ttl > 0 && cacheable {
 		l.storeAuth(key, authCacheScope(key), identifier, err, ttl, maxEntries)
@@ -388,18 +386,7 @@ func hasAuthHeaders(headers http.Header) bool {
 }
 
 func cacheableAuthProbeResult(err error) bool {
-	return err == nil || errors.Is(err, ErrForbidden) || errors.Is(err, ErrNotFound)
-}
-
-func cacheableAuthProbeResponse(err error, header http.Header, errorMinAge time.Duration, now time.Time) bool {
-	if err == nil || (!errors.Is(err, ErrForbidden) && !errors.Is(err, ErrNotFound)) || errorMinAge <= 0 {
-		return true
-	}
-	modified, parseErr := http.ParseTime(header.Get("Last-Modified"))
-	if parseErr != nil {
-		return true
-	}
-	return !modified.After(now.Add(-errorMinAge))
+	return err == nil
 }
 
 func (m LocalURLMapping) anonymousAuthTTL() time.Duration {
@@ -408,13 +395,6 @@ func (m LocalURLMapping) anonymousAuthTTL() time.Duration {
 
 func (m LocalURLMapping) authenticatedAuthTTL() time.Duration {
 	return m.AuthCacheTTL
-}
-
-func (m LocalURLMapping) authErrorCacheMinAge() time.Duration {
-	if m.AuthErrorCacheMinAge > 0 {
-		return m.AuthErrorCacheMinAge
-	}
-	return defaultAuthErrorCacheMinAge
 }
 
 func (m LocalURLMapping) authCacheMaxEntries() int {

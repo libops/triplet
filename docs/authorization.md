@@ -158,16 +158,13 @@ repository permissions change rarely or when the mapping is used for content
 whose access is primarily stable. Shorter TTLs keep permission changes visible
 sooner at the cost of more probes to the upstream Drupal URL.
 
-Triplet caches successful probes, 401, 403, and 404 responses for the
-configured TTL. Other upstream errors are not cached.
+Triplet caches successful probes for the configured TTL. It does not cache
+401/403 authorization denials, because those commonly happen while Drupal is
+still publishing or recalculating access. Other upstream errors are not cached.
 
-Negative auth-probe caching is conservative. For 401, 403, and 404 probe
-responses, Triplet checks the upstream `Last-Modified` header before caching the
-denial. If `Last-Modified` parses and is newer than
-5 minutes ago, the denial is not cached. This avoids holding a stale denial
-while repository access rules or file publication are still settling. If
-`Last-Modified` is absent, unparseable, or older than that minimum age window,
-the denial can be cached for the configured auth TTL.
+It also does not cache 404 not-found responses. A 404 can happen while Drupal
+or Fedora is still publishing a just-created file, so Triplet rechecks upstream
+on the next request instead of holding a stale miss.
 
 The image cache invalidation route also clears matching auth-probe entries when
 the source backend supports it.
