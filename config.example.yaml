@@ -52,8 +52,8 @@ vips:
     - VipsForeignLoadPdf
 
 iiif:
-  # Optional shared CORS allowlist for IIIF Presentation, Search, Auth, and
-  # Image unless iiif.image.allowed_origins is set. Entries must be exact
+  # Optional shared CORS allowlist for IIIF Presentation and Image unless
+  # iiif.image.allowed_origins is set. Entries must be exact
   # origins (`https://viewer.example.edu`) or `*`.
   # When empty, no Access-Control-Allow-Origin header is emitted.
   # allowed_origins:
@@ -77,10 +77,13 @@ iiif:
     max_source_pixels: 250000000
     # Refuse or stop spooling encoded source files larger than this many bytes
     # when the source is not already available as a file path. 0 disables.
-    max_source_bytes: 1073741824
-    # Refuse encoded derivatives larger than this many bytes after libvips
-    # export. 0 disables.
-    max_derivative_bytes: 536870912
+    max_source_bytes: 1GiB
+    # Per-request encoded response limit. Refuse one generated derivative if it
+    # is larger than this many bytes after libvips export. This protects the
+    # server from returning or caching a single unexpectedly huge response.
+    # This is not the total cache size; see cache.max_bytes for the aggregate
+    # filesystem derivative-cache budget. 0 disables.
+    max_derivative_bytes: 512MiB
     # Bound concurrent libvips jobs across image derivatives and info probes.
     max_concurrent_transforms: 4
     # Advertise additional transform limits in info.json so clients can avoid
@@ -91,8 +94,14 @@ iiif:
     # Cantaloupe behavior. `normalize` converts to sRGB/gray. `none` skips
     # profile conversion and strips metadata where the output codec supports it.
     color_management: preserve
-    # `auto` uses random access for region crops and sequential access for
-    # full/resize requests. You can force sequential or random for profiling.
+    # How libvips should read source pixels from disk or spooled source files.
+    # `auto` is the production default: it uses random access for region crops
+    # and sequential access for full-image or resize requests. Sequential access
+    # streams forward and can reduce memory and I/O for whole-image reads, but it
+    # is a poor fit for tile/region workloads that need pixels from arbitrary
+    # offsets. Random access is better for crops and tiled viewers, but can do
+    # unnecessary work for simple full-image derivatives. Force `sequential` or
+    # `random` only when profiling a specific deployment or source format.
     load_access: auto
     # Cache info.json dimensions by identifier plus source mtime/size.
     info_dimension_cache: true
@@ -119,20 +128,9 @@ iiif:
     # Bearer token. Prefer injecting this from the environment.
     write_enabled: false
     # write_token: ${TRIPLET_PRESENTATION_WRITE_TOKEN}
-  search:
-    # IIIF Content Search 2.0 surface. The default backend is a no-op that
-    # returns an empty AnnotationPage; indexing adapters are future work.
-    enabled: false
-    prefix: /search/v2
-  auth:
-    # IIIF Authorization Flow API 2.0 surface. No production authorizer is
-    # built in yet; permit-all must be explicitly enabled for development.
-    enabled: false
-    prefix: /auth/v2
-    development_permit_all: false
 
 # Identifier resolution. Exactly one source must be the default; additional
-# sources are selected by identifier scheme (e.g. `https://…`, `gs://…`).
+# sources are selected by identifier scheme (e.g. `https://…`).
 sources:
   default: file
   file:
@@ -180,27 +178,23 @@ sources:
   #   allowed_origins: [https://islandora-stage.lib.lehigh.edu]
   #   allow_private_hosts: false
   #   request_timeout: 2m
-  #   max_bytes: 52428800
-  # gcs:
-  #   bucket_url: gs://my-bucket
-  #   prefix: images
+  #   max_bytes: 50MiB
 
 cache:
-  # Derivative cache. Configure either a filesystem root or a blob bucket URL.
+  # Derivative cache. Configure a filesystem root.
   root: /var/lib/triplet/cache
-  # bucket_url: gs://triplet-cache
-  # prefix: derivatives
-  # Best-effort eviction target for the file cache. 0 disables size-based
-  # eviction.
-  max_bytes: 1073741824
-  # Optional source cache for fetched source bytes (primarily HTTP
-  # identifiers). Configure either a filesystem root or a blob bucket URL.
+  # Best-effort aggregate size target for all cached derivative payload files
+  # under cache.root. This controls retained cache footprint over time, not the
+  # size of any single generated response. A write may temporarily exceed this
+  # target before eviction runs, and metadata sidecar files are not counted.
+  # 0 disables size-based eviction.
+  max_bytes: 500GiB
+  # Optional filesystem source cache for fetched source bytes (primarily HTTP
+  # identifiers).
   # source_root: /var/lib/triplet/source-cache
-  # source_bucket_url: gs://triplet-source-cache
-  # source_prefix: sources
   # Best-effort eviction target for the source cache. 0 disables size-based
   # eviction.
-  source_max_bytes: 1073741824
+  source_max_bytes: 1GiB
   # When non-zero, stale source-cache hits are served immediately while a
   # background refresh fetches a fresh copy for later requests.
   source_stale_after: 24h
@@ -210,7 +204,7 @@ extensions:
   # → encoded derivative. Same pipeline as the spec routes.
   transform:
     enabled: true
-    max_upload_bytes: 52428800 # 50 MiB
+    max_upload_bytes: 50MiB
   # Non-spec endpoint: POST bytes → mints an opaque identifier resolvable
   # via the standard /iiif/3/{id}/... routes.
   uploads:

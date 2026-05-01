@@ -119,7 +119,7 @@ flowchart TD
   deriv -- No --> transform[Transform source] --> store[Store if cacheable] --> serve([Serve derivative])
 ```
 
-## IIIF Authorization Flow terminology
+## Source authorization terminology
 
 Triplet's local URL `auth_probe` is a server-side source authorization check. It
 is related to, but not the same thing as, an IIIF Authorization Flow API 2.0
@@ -137,12 +137,7 @@ Triplet's `auth_probe` uses the same idea internally: before serving a local fil
 or a cached derivative, Triplet asks the original source URL what status this
 request would receive. The source response remains authoritative.
 
-The IIIF auth service declarations can inform viewers and Presentation API
-responses, but they should not be treated as a standalone filesystem bypass
-inside the Image API path. A single Image API request does not necessarily carry
-the Manifest context that referenced it, manifests can be stale, and multiple
-manifests can point at the same image service with different access stories. For
-Triplet's local-file shortcut, the safe optimization is still based on the source
+For Triplet's local-file shortcut, the safe optimization is based on the source
 authorization result:
 
 - If the source allows anonymous access, Triplet can cache that anonymous allow
@@ -205,5 +200,5 @@ sources:
       - https://repository.example.edu
     allow_private_hosts: false
     request_timeout: 2m
-    max_bytes: 52428800
+    max_bytes: 50MiB
 ```

@@ -11,6 +11,12 @@ All image processing is done by [libvips] through [govips].
 docker run -p 8080:8080 ghcr.io/libops/triplet:main
 ```
 
+Then try the bundled sample image:
+
+```bash
+curl http://localhost:8080/iiif/3/sample.png/info.json
+```
+
 ## Documentation
 
 The project documentation lives at <https://libops.github.io/triplet>.

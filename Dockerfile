@@ -216,6 +216,11 @@ RUN rm -rf \
   && groupadd --system triplet \
   && useradd --system --gid triplet --uid 100 --home-dir /nonexistent --shell /usr/sbin/nologin triplet
 
+WORKDIR /var/lib/triplet
+RUN mkdir -p /var/lib/triplet/cache /var/lib/triplet/testdata/images \
+  && chown -R triplet:triplet /var/lib/triplet
+COPY --chown=triplet:triplet deploy/compose/images/ /var/lib/triplet/testdata/images/
+
 COPY --from=build /out/triplet /usr/local/bin/triplet
 COPY --from=build /out/triplet-healthcheck /usr/local/bin/triplet-healthcheck
 COPY config.example.yaml /etc/triplet/config.yaml

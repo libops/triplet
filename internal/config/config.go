@@ -78,8 +78,6 @@ type IIIF struct {
 	AllowedOrigins []string     `yaml:"allowed_origins"`
 	Image          Image        `yaml:"image"`
 	Presentation   Presentation `yaml:"presentation"`
-	Search         Search       `yaml:"search"`
-	Auth           Auth         `yaml:"auth"`
 }
 
 // Image holds Image API 3.0 settings.
@@ -92,8 +90,8 @@ type Image struct {
 	MaxOutputPixels                  int64    `yaml:"max_output_pixels"`
 	AllowUnsafeUnlimitedOutputPixels bool     `yaml:"allow_unsafe_unlimited_output_pixels"`
 	MaxSourcePixels                  int64    `yaml:"max_source_pixels"`
-	MaxSourceBytes                   int64    `yaml:"max_source_bytes"`
-	MaxDerivativeBytes               int64    `yaml:"max_derivative_bytes"`
+	MaxSourceBytes                   ByteSize `yaml:"max_source_bytes"`
+	MaxDerivativeBytes               ByteSize `yaml:"max_derivative_bytes"`
 	MaxConcurrentTransforms          int      `yaml:"max_concurrent_transforms"`
 	MaxWidth                         int      `yaml:"max_width"`
 	MaxHeight                        int      `yaml:"max_height"`
@@ -112,26 +110,12 @@ type Presentation struct {
 	WriteToken   string `yaml:"write_token"`
 }
 
-// Search holds Content Search API 2.0 settings.
-type Search struct {
-	Enabled bool   `yaml:"enabled"`
-	Prefix  string `yaml:"prefix"`
-}
-
-// Auth holds Authorization Flow API 2.0 settings.
-type Auth struct {
-	Enabled              bool   `yaml:"enabled"`
-	Prefix               string `yaml:"prefix"`
-	DevelopmentPermitAll bool   `yaml:"development_permit_all"`
-}
-
 // Sources declares identifier-resolution backends. Exactly one of the
 // declared sources must match Default.
 type Sources struct {
 	Default string      `yaml:"default"`
 	File    *FileSource `yaml:"file,omitempty"`
 	HTTP    *HTTPSource `yaml:"http,omitempty"`
-	GCS     *GCSSource  `yaml:"gcs,omitempty"`
 }
 
 // FileSource resolves identifiers as paths under Root.
@@ -160,25 +144,15 @@ type HTTPSource struct {
 	AllowedOrigins    []string      `yaml:"allowed_origins"`
 	AllowPrivateHosts bool          `yaml:"allow_private_hosts"`
 	RequestTimeout    time.Duration `yaml:"request_timeout"`
-	MaxBytes          int64         `yaml:"max_bytes"`
-}
-
-// GCSSource resolves identifiers as object keys in a GCS bucket.
-type GCSSource struct {
-	BucketURL string `yaml:"bucket_url"`
-	Prefix    string `yaml:"prefix"`
+	MaxBytes          ByteSize      `yaml:"max_bytes"`
 }
 
 // Cache declares optional derivative-cache settings.
 type Cache struct {
 	Root             string        `yaml:"root"`
-	MaxBytes         int64         `yaml:"max_bytes"`
-	BucketURL        string        `yaml:"bucket_url"`
-	Prefix           string        `yaml:"prefix"`
+	MaxBytes         ByteSize      `yaml:"max_bytes"`
 	SourceRoot       string        `yaml:"source_root"`
-	SourceMaxBytes   int64         `yaml:"source_max_bytes"`
-	SourceBucketURL  string        `yaml:"source_bucket_url"`
-	SourcePrefix     string        `yaml:"source_prefix"`
+	SourceMaxBytes   ByteSize      `yaml:"source_max_bytes"`
 	SourceStaleAfter time.Duration `yaml:"source_stale_after"`
 }
 
@@ -190,8 +164,8 @@ type Extensions struct {
 
 // Transform configures the POST /v1/transform endpoint.
 type Transform struct {
-	Enabled        bool  `yaml:"enabled"`
-	MaxUploadBytes int64 `yaml:"max_upload_bytes"`
+	Enabled        bool     `yaml:"enabled"`
+	MaxUploadBytes ByteSize `yaml:"max_upload_bytes"`
 }
 
 // Uploads configures the POST /v1/uploads endpoint.
@@ -352,12 +326,6 @@ func (c *Config) applyDefaults() {
 	if c.IIIF.Presentation.Prefix == "" {
 		c.IIIF.Presentation.Prefix = "/presentation/v3"
 	}
-	if c.IIIF.Search.Prefix == "" {
-		c.IIIF.Search.Prefix = "/search/v2"
-	}
-	if c.IIIF.Auth.Prefix == "" {
-		c.IIIF.Auth.Prefix = "/auth/v2"
-	}
 }
 
 func (c *Config) validate() error {
@@ -428,15 +396,6 @@ func (c *Config) validate() error {
 	}
 	if !strings.HasPrefix(c.IIIF.Presentation.Prefix, "/") {
 		return fmt.Errorf("iiif.presentation.prefix: must start with `/`, got %q", c.IIIF.Presentation.Prefix)
-	}
-	if !strings.HasPrefix(c.IIIF.Search.Prefix, "/") {
-		return fmt.Errorf("iiif.search.prefix: must start with `/`, got %q", c.IIIF.Search.Prefix)
-	}
-	if !strings.HasPrefix(c.IIIF.Auth.Prefix, "/") {
-		return fmt.Errorf("iiif.auth.prefix: must start with `/`, got %q", c.IIIF.Auth.Prefix)
-	}
-	if c.IIIF.Auth.Enabled && !c.IIIF.Auth.DevelopmentPermitAll {
-		return errors.New("iiif.auth.development_permit_all is required when iiif.auth.enabled = true")
 	}
 	if c.IIIF.Image.MaxOutputPixels < 0 {
 		return errors.New("iiif.image.max_output_pixels: must be >= 0")
@@ -531,9 +490,6 @@ func (c *Config) validate() error {
 			}
 		}
 	}
-	if c.Sources.GCS != nil && c.Sources.GCS.BucketURL == "" {
-		return errors.New("sources.gcs.bucket_url is required when sources.gcs is configured")
-	}
 	if c.IIIF.Image.Enabled {
 		switch c.Sources.Default {
 		case "":
@@ -546,19 +502,9 @@ func (c *Config) validate() error {
 			if c.Sources.HTTP == nil {
 				return errors.New("sources.http is required when sources.default = http")
 			}
-		case "gcs":
-			if c.Sources.GCS == nil || c.Sources.GCS.BucketURL == "" {
-				return errors.New("sources.gcs.bucket_url is required when sources.default = gcs")
-			}
 		default:
 			return fmt.Errorf("sources.default: %q not supported in this build", c.Sources.Default)
 		}
-	}
-	if c.Cache.Root != "" && c.Cache.BucketURL != "" {
-		return errors.New("cache.root and cache.bucket_url are mutually exclusive")
-	}
-	if c.Cache.SourceRoot != "" && c.Cache.SourceBucketURL != "" {
-		return errors.New("cache.source_root and cache.source_bucket_url are mutually exclusive")
 	}
 	if c.IIIF.Presentation.Enabled && c.IIIF.Presentation.Root == "" && c.IIIF.Presentation.DSN == "" {
 		return errors.New("iiif.presentation.root or iiif.presentation.dsn is required when iiif.presentation.enabled = true")

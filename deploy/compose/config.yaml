@@ -20,8 +20,8 @@ iiif:
     max_output_pixels: 100000000
     allow_unsafe_unlimited_output_pixels: false
     max_source_pixels: 250000000
-    max_source_bytes: 1073741824
-    max_derivative_bytes: 536870912
+    max_source_bytes: 1GiB
+    max_derivative_bytes: 512MiB
     max_concurrent_transforms: 4
     color_management: preserve
     load_access: auto
@@ -32,13 +32,6 @@ iiif:
     root: /var/lib/triplet/presentation
     write_enabled: ${TRIPLET_PRESENTATION_WRITE_ENABLED}
     write_token: "${TRIPLET_PRESENTATION_WRITE_TOKEN}"
-  search:
-    enabled: false
-    prefix: /search/v2
-  auth:
-    enabled: false
-    prefix: /auth/v2
-    development_permit_all: false
 
 sources:
   default: file
@@ -52,13 +45,13 @@ sources:
   #   allowed_origins: [https://images.example.org]
   #   allow_private_hosts: false
   #   request_timeout: 2m
-  #   max_bytes: 52428800
+  #   max_bytes: 50MiB
 
 cache:
   root: /var/lib/triplet/cache
-  max_bytes: 1073741824
+  max_bytes: 500GiB
   source_root: /var/lib/triplet/source-cache
-  source_max_bytes: 1073741824
+  source_max_bytes: 1GiB
   source_stale_after: 24h
 
 extensions:

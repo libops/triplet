@@ -17,15 +17,11 @@ import (
 	"github.com/libops/triplet/internal/cache"
 	"github.com/libops/triplet/internal/config"
 	"github.com/libops/triplet/internal/cors"
-	authz "github.com/libops/triplet/internal/iiif/auth/v2/authorizer"
-	authhandler "github.com/libops/triplet/internal/iiif/auth/v2/handler"
 	imghandler "github.com/libops/triplet/internal/iiif/image/v3/handler"
 	"github.com/libops/triplet/internal/iiif/image/v3/pipeline"
 	imgtypes "github.com/libops/triplet/internal/iiif/image/v3/types"
 	preshandler "github.com/libops/triplet/internal/iiif/presentation/v3/handler"
 	presstore "github.com/libops/triplet/internal/iiif/presentation/v3/store"
-	searchhandler "github.com/libops/triplet/internal/iiif/search/v2/handler"
-	"github.com/libops/triplet/internal/iiif/search/v2/searcher"
 	"github.com/libops/triplet/internal/metrics"
 	"github.com/libops/triplet/internal/observability"
 	"github.com/libops/triplet/internal/storage"
@@ -81,8 +77,8 @@ func Build(cfg *config.Config, logger *slog.Logger) (*http.Server, error) {
 		pipe := pipeline.New(src, pipeline.Limits{
 			MaxOutputPixels:    cfg.IIIF.Image.MaxOutputPixels,
 			MaxSourcePixels:    cfg.IIIF.Image.MaxSourcePixels,
-			MaxSourceBytes:     cfg.IIIF.Image.MaxSourceBytes,
-			MaxDerivativeBytes: cfg.IIIF.Image.MaxDerivativeBytes,
+			MaxSourceBytes:     int64(cfg.IIIF.Image.MaxSourceBytes),
+			MaxDerivativeBytes: int64(cfg.IIIF.Image.MaxDerivativeBytes),
 		}, pipeline.Options{
 			ColorManagement: cfg.IIIF.Image.ColorManagement,
 			LoadAccess:      cfg.IIIF.Image.LoadAccess,
@@ -111,7 +107,7 @@ func Build(cfg *config.Config, logger *slog.Logger) (*http.Server, error) {
 			},
 			cfg.IIIF.Image.InfoDimensionCache == nil || *cfg.IIIF.Image.InfoDimensionCache,
 			cfg.IIIF.Image.MaxSourcePixels,
-			cfg.IIIF.Image.MaxSourceBytes,
+			int64(cfg.IIIF.Image.MaxSourceBytes),
 			cfg.IIIF.Image.MaxConcurrentTransforms,
 			logger,
 		)
@@ -129,7 +125,7 @@ func Build(cfg *config.Config, logger *slog.Logger) (*http.Server, error) {
 		h := preshandler.New(
 			cfg.IIIF.Presentation.Prefix,
 			st,
-			cors.New(cfg.IIIF.AllowedOrigins, ""),
+			cors.New(cfg.IIIF.AllowedOrigins, "ETag"),
 			cfg.IIIF.Presentation.WriteEnabled,
 			cfg.IIIF.Presentation.WriteToken,
 			logger,
@@ -137,20 +133,6 @@ func Build(cfg *config.Config, logger *slog.Logger) (*http.Server, error) {
 		h.Register(mux)
 		logger.Info("presentation api enabled", "prefix", cfg.IIIF.Presentation.Prefix)
 	}
-	if cfg.IIIF.Search.Enabled {
-		h := searchhandler.New(cfg.IIIF.Search.Prefix, cfg.Server.PublicBaseURL, searcher.Noop{}, cors.New(cfg.IIIF.AllowedOrigins, ""), logger)
-		h.Register(mux)
-		logger.Info("search api enabled", "prefix", cfg.IIIF.Search.Prefix)
-	}
-	if cfg.IIIF.Auth.Enabled {
-		if !cfg.IIIF.Auth.DevelopmentPermitAll {
-			return nil, errors.New("iiif auth requires an explicit authorizer")
-		}
-		h := authhandler.New(cfg.IIIF.Auth.Prefix, cfg.Server.PublicBaseURL, authz.PermitAll{}, cors.New(cfg.IIIF.AllowedOrigins, ""), logger)
-		h.Register(mux)
-		logger.Warn("auth api enabled with development permit-all authorizer", "prefix", cfg.IIIF.Auth.Prefix)
-	}
-
 	var handler http.Handler = mux
 	handler = metrics.Middleware(handler)
 	handler = observability.LoggingMiddleware(logger, observability.LoggingOptions{
@@ -263,7 +245,6 @@ func Run(ctx context.Context, s *http.Server, logger *slog.Logger) error {
 }
 
 func buildSource(cfg *config.Config, logger *slog.Logger) (storage.Opener, func(), error) {
-	ctx := context.Background()
 	var cleanup func()
 
 	var fileOp storage.Opener
@@ -280,19 +261,19 @@ func buildSource(cfg *config.Config, logger *slog.Logger) (storage.Opener, func(
 		op := storage.NewHTTPOpener(
 			cfg.Sources.HTTP.AllowedOrigins,
 			cfg.Sources.HTTP.RequestTimeout,
-			cfg.Sources.HTTP.MaxBytes,
+			int64(cfg.Sources.HTTP.MaxBytes),
 		)
 		op.AllowPrivateHosts = cfg.Sources.HTTP.AllowPrivateHosts
 		authOp := storage.NewHTTPOpener(
 			cfg.Sources.HTTP.AllowedOrigins,
 			cfg.Sources.HTTP.RequestTimeout,
-			cfg.Sources.HTTP.MaxBytes,
+			int64(cfg.Sources.HTTP.MaxBytes),
 		)
 		authOp.AllowPrivateHosts = cfg.Sources.HTTP.AllowPrivateHosts
 		authOp.ForwardAuthHeaders = true
 		httpOp = op
-		if cfg.Cache.SourceRoot != "" || cfg.Cache.SourceBucketURL != "" {
-			sourceCache, err := buildSourceCache(ctx, cfg)
+		if cfg.Cache.SourceRoot != "" {
+			sourceCache, err := buildSourceCache(cfg)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -327,30 +308,12 @@ func buildSource(cfg *config.Config, logger *slog.Logger) (storage.Opener, func(
 		}
 	}
 
-	var gcsOp storage.Opener
-	if cfg.Sources.GCS != nil && cfg.Sources.GCS.BucketURL != "" {
-		op, err := storage.NewGCSOpener(ctx, cfg.Sources.GCS.BucketURL, cfg.Sources.GCS.Prefix, cfg.IIIF.Image.MaxSourceBytes)
-		if err != nil {
-			return nil, nil, err
-		}
-		previousCleanup := cleanup
-		cleanup = func() {
-			if previousCleanup != nil {
-				previousCleanup()
-			}
-			_ = op.Close()
-		}
-		gcsOp = op
-	}
-
 	var defaultOp storage.Opener
 	switch cfg.Sources.Default {
 	case "file":
 		defaultOp = fileOp
 	case "http":
 		defaultOp = httpOp
-	case "gcs":
-		defaultOp = gcsOp
 	default:
 		return nil, nil, fmt.Errorf("source %q not supported", cfg.Sources.Default)
 	}
@@ -365,10 +328,7 @@ func buildSource(cfg *config.Config, logger *slog.Logger) (storage.Opener, func(
 			storage.Route{HasScheme: "https", Opener: httpOp},
 		)
 	}
-	if gcsOp != nil {
-		routes = append(routes, storage.Route{HasScheme: "gs", Opener: gcsOp})
-	}
-	if len(routes) > 0 && (fileOp != nil || httpOp != nil || gcsOp != nil) {
+	if len(routes) > 0 && (fileOp != nil || httpOp != nil) {
 		return &storage.Multiplex{Routes: routes, Default: defaultOp}, cleanup, nil
 	}
 	return defaultOp, cleanup, nil
@@ -414,20 +374,14 @@ func buildLocalURLMappings(cfg *config.Config, fileOp storage.Opener) ([]storage
 
 func buildDerivativeCache(cfg *config.Config) (cache.Store, error) {
 	if cfg.Cache.Root == "" {
-		if cfg.Cache.BucketURL == "" {
-			return cache.Noop{}, nil
-		}
-		return cache.NewGCSStore(context.Background(), cfg.Cache.BucketURL, cfg.Cache.Prefix)
+		return cache.Noop{}, nil
 	}
-	return cache.NewFileStore(cfg.Cache.Root, cfg.Cache.MaxBytes)
+	return cache.NewFileStore(cfg.Cache.Root, int64(cfg.Cache.MaxBytes))
 }
 
-func buildSourceCache(ctx context.Context, cfg *config.Config) (cache.Store, error) {
+func buildSourceCache(cfg *config.Config) (cache.Store, error) {
 	if cfg.Cache.SourceRoot != "" {
-		return cache.NewFileStore(cfg.Cache.SourceRoot, cfg.Cache.SourceMaxBytes)
-	}
-	if cfg.Cache.SourceBucketURL != "" {
-		return cache.NewGCSStore(ctx, cfg.Cache.SourceBucketURL, cfg.Cache.SourcePrefix)
+		return cache.NewFileStore(cfg.Cache.SourceRoot, int64(cfg.Cache.SourceMaxBytes))
 	}
 	return cache.Noop{}, nil
 }

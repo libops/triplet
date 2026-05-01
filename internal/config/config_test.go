@@ -256,17 +256,6 @@ sources:
 			wantErr: "sources.file.root is required when sources.file.url_prefixes is configured",
 		},
 		{
-			name: "gcs source valid",
-			body: `
-server:
-  public_base_url: http://localhost:8080
-sources:
-  default: gcs
-  gcs:
-    bucket_url: gs://example-bucket
-`,
-		},
-		{
 			name: "image allowed origins valid",
 			body: `
 server:
@@ -449,51 +438,6 @@ iiif:
     enabled: true
     root: /tmp
 `,
-		},
-		{
-			name: "auth enabled requires permit-all opt-in",
-			body: `
-server:
-  public_base_url: http://localhost:8080
-iiif:
-  auth:
-    enabled: true
-sources:
-  default: file
-  file:
-    root: /tmp
-`,
-			wantErr: "iiif.auth.development_permit_all is required",
-		},
-		{
-			name: "auth enabled with development permit-all opt-in",
-			body: `
-server:
-  public_base_url: http://localhost:8080
-iiif:
-  auth:
-    enabled: true
-    development_permit_all: true
-sources:
-  default: file
-  file:
-    root: /tmp
-`,
-		},
-		{
-			name: "cache root and bucket url conflict",
-			body: `
-server:
-  public_base_url: http://localhost:8080
-sources:
-  default: file
-  file:
-    root: /tmp
-cache:
-  root: /tmp/cache
-  bucket_url: gs://cache-bucket
-`,
-			wantErr: "cache.root and cache.bucket_url are mutually exclusive",
 		},
 		{
 			name: "image allowed origins rejects empty entry",
@@ -683,12 +627,6 @@ sources:
 	if len(c.IIIF.AllowedOrigins) != 0 {
 		t.Errorf("IIIF.AllowedOrigins default = %#v", c.IIIF.AllowedOrigins)
 	}
-	if c.IIIF.Search.Prefix != "/search/v2" {
-		t.Errorf("Search.Prefix default = %q", c.IIIF.Search.Prefix)
-	}
-	if c.IIIF.Auth.Prefix != "/auth/v2" {
-		t.Errorf("Auth.Prefix default = %q", c.IIIF.Auth.Prefix)
-	}
 	if c.Logging.Level != "info" {
 		t.Errorf("Logging.Level default = %q", c.Logging.Level)
 	}
@@ -730,39 +668,47 @@ cache:
 	}
 }
 
-func TestLoadRejectsBadSearchPrefix(t *testing.T) {
+func TestLoadParsesHumanReadableByteSizes(t *testing.T) {
 	path := writeConfig(t, `
 server:
   public_base_url: http://localhost:8080
 iiif:
-  search:
-    prefix: search/v2
+  image:
+    max_source_bytes: 1GiB
+    max_derivative_bytes: 512MiB
 sources:
-  default: file
-  file:
-    root: /tmp
+  default: http
+  http:
+    allowed_origins: [https://example.org]
+    max_bytes: 50MiB
+cache:
+  max_bytes: 500GiB
+  source_max_bytes: 2GB
+extensions:
+  transform:
+    max_upload_bytes: 25MiB
 `)
-	_, err := Load(path)
-	if err == nil || !strings.Contains(err.Error(), "iiif.search.prefix") {
-		t.Fatalf("err = %v, want iiif.search.prefix validation error", err)
+	c, err := Load(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
 	}
-}
-
-func TestLoadRejectsBadAuthPrefix(t *testing.T) {
-	path := writeConfig(t, `
-server:
-  public_base_url: http://localhost:8080
-iiif:
-  auth:
-    prefix: auth/v2
-sources:
-  default: file
-  file:
-    root: /tmp
-`)
-	_, err := Load(path)
-	if err == nil || !strings.Contains(err.Error(), "iiif.auth.prefix") {
-		t.Fatalf("err = %v, want iiif.auth.prefix validation error", err)
+	if c.IIIF.Image.MaxSourceBytes != 1<<30 {
+		t.Errorf("MaxSourceBytes = %d", c.IIIF.Image.MaxSourceBytes)
+	}
+	if c.IIIF.Image.MaxDerivativeBytes != 512<<20 {
+		t.Errorf("MaxDerivativeBytes = %d", c.IIIF.Image.MaxDerivativeBytes)
+	}
+	if c.Sources.HTTP == nil || c.Sources.HTTP.MaxBytes != 50<<20 {
+		t.Errorf("HTTP.MaxBytes = %#v", c.Sources.HTTP)
+	}
+	if c.Cache.MaxBytes != 500<<30 {
+		t.Errorf("Cache.MaxBytes = %d", c.Cache.MaxBytes)
+	}
+	if c.Cache.SourceMaxBytes != 2_000_000_000 {
+		t.Errorf("Cache.SourceMaxBytes = %d", c.Cache.SourceMaxBytes)
+	}
+	if c.Extensions.Transform.MaxUploadBytes != 25<<20 {
+		t.Errorf("Transform.MaxUploadBytes = %d", c.Extensions.Transform.MaxUploadBytes)
 	}
 }
 

@@ -102,8 +102,8 @@ type Resource struct {
 type Collection = Resource
 type Range = Resource
 
-// Service is intentionally open because IIIF services span Image, Search,
-// Auth, and extension APIs.
+// Service is intentionally open because IIIF services span Image and extension
+// APIs.
 type Service struct {
 	ID      string      `json:"id,omitempty"`
 	Type    string      `json:"type"`

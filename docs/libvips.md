@@ -25,7 +25,7 @@ iiif:
   image:
     max_output_pixels: 100000000
     max_source_pixels: 250000000
-    max_derivative_bytes: 536870912
+    max_derivative_bytes: 512MiB
     max_concurrent_transforms: 4
     color_management: preserve
     load_access: auto
