@@ -128,31 +128,26 @@ type FileSource struct {
 
 // FileURLMapping maps a URL identifier prefix to a local filesystem root.
 type FileURLMapping struct {
-	Prefix                    string        `yaml:"prefix"`
-	Root                      string        `yaml:"root"`
-	OCFL                      bool          `yaml:"ocfl"`
-	AuthProbe                 bool          `yaml:"auth_probe"`
-	AuthCacheTTL              time.Duration `yaml:"auth_cache_ttl"`
-	AuthAnonymousCacheTTL     time.Duration `yaml:"auth_anonymous_cache_ttl"`
-	AuthAuthenticatedCacheTTL time.Duration `yaml:"auth_authenticated_cache_ttl"`
-	AuthErrorCacheMinAge      time.Duration `yaml:"auth_error_cache_min_age"`
-	AuthCacheMaxEntries       int           `yaml:"auth_cache_max_entries"`
+	Prefix    string `yaml:"prefix"`
+	Root      string `yaml:"root"`
+	OCFL      bool   `yaml:"ocfl"`
+	AuthProbe bool   `yaml:"auth_probe"`
 }
 
 // HTTPSource resolves identifiers that are HTTP(S) URLs.
 type HTTPSource struct {
-	AllowedOrigins          []string      `yaml:"allowed_origins"`
-	AllowPrivateHosts       bool          `yaml:"allow_private_hosts"`
-	RequestTimeout          time.Duration `yaml:"request_timeout"`
-	MaxBytes                ByteSize      `yaml:"max_bytes"`
-	MetadataCacheTTL        time.Duration `yaml:"metadata_cache_ttl"`
-	MetadataCacheMaxEntries int           `yaml:"metadata_cache_max_entries"`
+	AllowedOrigins    []string      `yaml:"allowed_origins"`
+	AllowPrivateHosts bool          `yaml:"allow_private_hosts"`
+	RequestTimeout    time.Duration `yaml:"request_timeout"`
+	MaxBytes          ByteSize      `yaml:"max_bytes"`
+	MetadataCacheTTL  time.Duration `yaml:"metadata_cache_ttl"`
 }
 
 // Cache declares optional derivative-cache settings.
 type Cache struct {
 	Root             string        `yaml:"root"`
 	MaxBytes         ByteSize      `yaml:"max_bytes"`
+	MaxAge           time.Duration `yaml:"max_age"`
 	SourceRoot       string        `yaml:"source_root"`
 	SourceMaxBytes   ByteSize      `yaml:"source_max_bytes"`
 	SourceStaleAfter time.Duration `yaml:"source_stale_after"`
@@ -436,6 +431,9 @@ func (c *Config) validate() error {
 	if c.Cache.MaxBytes < 0 {
 		return errors.New("cache.max_bytes: must be >= 0")
 	}
+	if c.Cache.MaxAge < 0 {
+		return errors.New("cache.max_age: must be >= 0")
+	}
 	if c.Cache.SourceMaxBytes < 0 {
 		return errors.New("cache.source_max_bytes: must be >= 0")
 	}
@@ -454,9 +452,6 @@ func (c *Config) validate() error {
 		}
 		if c.Sources.HTTP.MetadataCacheTTL < 0 {
 			return errors.New("sources.http.metadata_cache_ttl: must be >= 0")
-		}
-		if c.Sources.HTTP.MetadataCacheMaxEntries < 0 {
-			return errors.New("sources.http.metadata_cache_max_entries: must be >= 0")
 		}
 	}
 	if c.Sources.File != nil {
@@ -480,21 +475,6 @@ func (c *Config) validate() error {
 			}
 			if mapping.Root == "" {
 				return fmt.Errorf("sources.file.url_mappings[%d].root is required", i)
-			}
-			if mapping.AuthCacheTTL < 0 {
-				return fmt.Errorf("sources.file.url_mappings[%d].auth_cache_ttl: must be >= 0", i)
-			}
-			if mapping.AuthAnonymousCacheTTL < 0 {
-				return fmt.Errorf("sources.file.url_mappings[%d].auth_anonymous_cache_ttl: must be >= 0", i)
-			}
-			if mapping.AuthAuthenticatedCacheTTL < 0 {
-				return fmt.Errorf("sources.file.url_mappings[%d].auth_authenticated_cache_ttl: must be >= 0", i)
-			}
-			if mapping.AuthErrorCacheMinAge < 0 {
-				return fmt.Errorf("sources.file.url_mappings[%d].auth_error_cache_min_age: must be >= 0", i)
-			}
-			if mapping.AuthCacheMaxEntries < 0 {
-				return fmt.Errorf("sources.file.url_mappings[%d].auth_cache_max_entries: must be >= 0", i)
 			}
 		}
 	}

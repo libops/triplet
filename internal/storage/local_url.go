@@ -44,15 +44,13 @@ type LocalURLFallback struct {
 
 // LocalURLMapping maps a URL identifier prefix to a local file source.
 type LocalURLMapping struct {
-	Prefix                    string
-	File                      *FileOpener
-	OCFL                      bool
-	AuthProbe                 bool
-	AuthCacheTTL              time.Duration
-	AuthAnonymousCacheTTL     time.Duration
-	AuthAuthenticatedCacheTTL time.Duration
-	AuthErrorCacheMinAge      time.Duration
-	AuthCacheMaxEntries       int
+	Prefix               string
+	File                 *FileOpener
+	OCFL                 bool
+	AuthProbe            bool
+	AuthCacheTTL         time.Duration
+	AuthErrorCacheMinAge time.Duration
+	AuthCacheMaxEntries  int
 }
 
 type authCacheEntry struct {
@@ -69,8 +67,6 @@ type authCacheTier string
 const (
 	authCacheTierAnonymous      authCacheTier = "anonymous"
 	authCacheTierAuthenticated  authCacheTier = "authenticated"
-	defaultAnonymousAuthTTL                   = 5 * time.Minute
-	defaultAuthenticatedAuthTTL               = 5 * time.Minute
 	defaultAuthErrorCacheMinAge               = 5 * time.Minute
 	defaultAuthCacheMaxEntries                = 4096
 )
@@ -407,23 +403,11 @@ func cacheableAuthProbeResponse(err error, header http.Header, errorMinAge time.
 }
 
 func (m LocalURLMapping) anonymousAuthTTL() time.Duration {
-	if m.AuthAnonymousCacheTTL > 0 {
-		return m.AuthAnonymousCacheTTL
-	}
-	if m.AuthCacheTTL > 0 {
-		return m.AuthCacheTTL
-	}
-	return defaultAnonymousAuthTTL
+	return m.AuthCacheTTL
 }
 
 func (m LocalURLMapping) authenticatedAuthTTL() time.Duration {
-	if m.AuthAuthenticatedCacheTTL > 0 {
-		return m.AuthAuthenticatedCacheTTL
-	}
-	if m.AuthCacheTTL > 0 {
-		return m.AuthCacheTTL
-	}
-	return defaultAuthenticatedAuthTTL
+	return m.AuthCacheTTL
 }
 
 func (m LocalURLMapping) authErrorCacheMinAge() time.Duration {

@@ -494,10 +494,10 @@ func TestLocalURLFallbackAnonymousAuthProbeTTL(t *testing.T) {
 		const ttl = 10 * time.Second
 		op := &LocalURLFallback{
 			Mappings: []LocalURLMapping{{
-				Prefix:                "/system/files",
-				File:                  fileOp,
-				AuthProbe:             true,
-				AuthAnonymousCacheTTL: ttl,
+				Prefix:       "/system/files",
+				File:         fileOp,
+				AuthProbe:    true,
+				AuthCacheTTL: ttl,
 			}},
 			AllowedOrigins: []string{"https://repo.example.edu"},
 			Fallback:       errOpener{},
@@ -546,15 +546,13 @@ func TestLocalURLFallbackAuthenticatedAuthProbeTTL(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		const anonTTL = time.Hour
-		const authTTL = 10 * time.Second
+		const ttl = 10 * time.Second
 		op := &LocalURLFallback{
 			Mappings: []LocalURLMapping{{
-				Prefix:                    "/system/files",
-				File:                      fileOp,
-				AuthProbe:                 true,
-				AuthAnonymousCacheTTL:     anonTTL,
-				AuthAuthenticatedCacheTTL: authTTL,
+				Prefix:       "/system/files",
+				File:         fileOp,
+				AuthProbe:    true,
+				AuthCacheTTL: ttl,
 			}},
 			AllowedOrigins: []string{"https://repo.example.edu"},
 			Fallback:       errOpener{},
@@ -573,7 +571,7 @@ func TestLocalURLFallbackAuthenticatedAuthProbeTTL(t *testing.T) {
 			t.Fatalf("initial authenticated probes = %d", got)
 		}
 
-		time.Sleep(authTTL - time.Nanosecond)
+		time.Sleep(ttl - time.Nanosecond)
 		synctest.Wait()
 		openAndClose(t, op, ctx, identifier)
 		if got := anonProbes.Load(); got != 1 {
@@ -586,7 +584,7 @@ func TestLocalURLFallbackAuthenticatedAuthProbeTTL(t *testing.T) {
 		time.Sleep(2 * time.Nanosecond)
 		synctest.Wait()
 		openAndClose(t, op, ctx, identifier)
-		if got := anonProbes.Load(); got != 1 {
+		if got := anonProbes.Load(); got != 2 {
 			t.Fatalf("anonymous probes after auth ttl = %d", got)
 		}
 		if got := authProbes.Load(); got != 2 {
@@ -618,10 +616,10 @@ func TestLocalURLFallbackAuthProbeAnonymousSucceedsAndCaches(t *testing.T) {
 	}
 	op := &LocalURLFallback{
 		Mappings: []LocalURLMapping{{
-			Prefix:                srv.URL + "/system/files",
-			File:                  fileOp,
-			AuthProbe:             true,
-			AuthAnonymousCacheTTL: time.Minute,
+			Prefix:       srv.URL + "/system/files",
+			File:         fileOp,
+			AuthProbe:    true,
+			AuthCacheTTL: time.Minute,
 		}},
 		Fallback:     errOpener{},
 		AuthFallback: testAuthHTTP(t, srv),
@@ -737,11 +735,10 @@ func TestLocalURLFallbackAuthProbeFallsBackToCredentialedCache(t *testing.T) {
 	}
 	op := &LocalURLFallback{
 		Mappings: []LocalURLMapping{{
-			Prefix:                    srv.URL + "/system/files",
-			File:                      fileOp,
-			AuthProbe:                 true,
-			AuthAnonymousCacheTTL:     time.Minute,
-			AuthAuthenticatedCacheTTL: time.Minute,
+			Prefix:       srv.URL + "/system/files",
+			File:         fileOp,
+			AuthProbe:    true,
+			AuthCacheTTL: time.Minute,
 		}},
 		Fallback:     errOpener{},
 		AuthFallback: testAuthHTTP(t, srv),
@@ -780,10 +777,10 @@ func TestLocalURLFallbackAuthProbeCoalescesConcurrentRequests(t *testing.T) {
 	}
 	op := &LocalURLFallback{
 		Mappings: []LocalURLMapping{{
-			Prefix:                srv.URL + "/system/files",
-			File:                  fileOp,
-			AuthProbe:             true,
-			AuthAnonymousCacheTTL: time.Minute,
+			Prefix:       srv.URL + "/system/files",
+			File:         fileOp,
+			AuthProbe:    true,
+			AuthCacheTTL: time.Minute,
 		}},
 		Fallback:     errOpener{},
 		AuthFallback: testAuthHTTP(t, srv),

@@ -295,9 +295,8 @@ func buildSource(cfg *config.Config, logger *slog.Logger) (storage.Opener, func(
 		}
 		if cfg.Sources.HTTP.MetadataCacheTTL > 0 {
 			httpOp = &storage.MetaCaching{
-				Inner:      httpOp,
-				TTL:        cfg.Sources.HTTP.MetadataCacheTTL,
-				MaxEntries: cfg.Sources.HTTP.MetadataCacheMaxEntries,
+				Inner: httpOp,
+				TTL:   cfg.Sources.HTTP.MetadataCacheTTL,
 			}
 		}
 		localURLMappings, err := buildLocalURLMappings(cfg, fileOp)
@@ -352,15 +351,11 @@ func buildLocalURLMappings(cfg *config.Config, fileOp storage.Opener) ([]storage
 			return nil, err
 		}
 		mappings = append(mappings, storage.LocalURLMapping{
-			Prefix:                    mapping.Prefix,
-			File:                      op,
-			OCFL:                      mapping.OCFL,
-			AuthProbe:                 mapping.AuthProbe,
-			AuthCacheTTL:              mapping.AuthCacheTTL,
-			AuthAnonymousCacheTTL:     mapping.AuthAnonymousCacheTTL,
-			AuthAuthenticatedCacheTTL: mapping.AuthAuthenticatedCacheTTL,
-			AuthErrorCacheMinAge:      mapping.AuthErrorCacheMinAge,
-			AuthCacheMaxEntries:       mapping.AuthCacheMaxEntries,
+			Prefix:       mapping.Prefix,
+			File:         op,
+			OCFL:         mapping.OCFL,
+			AuthProbe:    mapping.AuthProbe,
+			AuthCacheTTL: cfg.Sources.HTTP.MetadataCacheTTL,
 		})
 	}
 	if len(cfg.Sources.File.URLPrefixes) > 0 {
@@ -383,7 +378,7 @@ func buildDerivativeCache(cfg *config.Config) (cache.Store, error) {
 	if cfg.Cache.Root == "" {
 		return cache.Noop{}, nil
 	}
-	return cache.NewFileStore(cfg.Cache.Root, int64(cfg.Cache.MaxBytes))
+	return cache.NewFileStoreWithMaxAge(cfg.Cache.Root, int64(cfg.Cache.MaxBytes), cfg.Cache.MaxAge)
 }
 
 func buildSourceCache(cfg *config.Config) (cache.Store, error) {

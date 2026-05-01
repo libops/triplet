@@ -150,9 +150,8 @@ iiif:
 ## Caching
 
 Cache-related settings, including derivative caches, source caches,
-`info_dimension_cache`, and libvips operation caches are covered in
-[Caching](caching.md). Local URL auth-probe TTLs are covered in
-[Authorization](authorization.md).
+`info_dimension_cache`, local URL auth-probe caching, and libvips operation
+caches are covered in [Caching](caching.md).
 
 ## Source selection
 
@@ -218,7 +217,6 @@ sources:
     request_timeout: 2m
     max_bytes: 50MiB
     metadata_cache_ttl: 5m
-    metadata_cache_max_entries: 4096
 ```
 
 The HTTP host allowlist is a source-fetch boundary. See
@@ -232,5 +230,7 @@ keys from cached `ETag`, `Last-Modified`, and size metadata instead of making a
 new upstream `HEAD` or range request before checking the derivative cache. If
 the upstream source changes, disappears, or changes authorization during that
 TTL, Triplet may continue serving the locally cached derivative until the
-metadata entry expires. Leave the TTL unset or `0` when every derivative request
-must revalidate source metadata upstream.
+metadata entry expires. Local URL mappings with `auth_probe: true` inherit the
+same TTL for anonymous and credentialed auth-probe decisions. Leave the TTL
+unset or `0` when every derivative request must revalidate source metadata and
+every auth-probed local URL request must recheck upstream authorization.

@@ -146,10 +146,6 @@ sources:
     #   - prefix: /system/files
     #     root: /private
     #     auth_probe: true
-    #     auth_anonymous_cache_ttl: 720h
-    #     auth_authenticated_cache_ttl: 168h
-    #     auth_error_cache_min_age: 5m
-    #     auth_cache_max_entries: 4096
     #   - prefix: /fedora
     #     root: /fcrepo
     #     ocfl: true
@@ -159,10 +155,8 @@ sources:
     # `auth_probe: true` means Triplet forwards browser Cookie/Authorization
     # headers to the original URL and requires 200/206 before reading locally.
     # Auth probes are tiered: anonymous is checked first and cached separately;
-    # credentialed probes only run when anonymous access is denied. Long TTLs
-    # are explicit access-staleness windows; defaults are short when omitted.
-    # 403/404 probe results are not cached when Last-Modified is newer than
-    # auth_error_cache_min_age, avoiding permission-publication races.
+    # credentialed probes only run when anonymous access is denied. Probe
+    # decisions inherit sources.http.metadata_cache_ttl.
   # Optional HTTP(S) source. When configured alongside the file source,
   # `http://...` and `https://...` identifiers are routed here automatically.
   #
@@ -185,7 +179,6 @@ sources:
   #   # time. During this TTL, Triplet may serve a cached derivative without
   #   # noticing that the remote source changed or disappeared.
   #   metadata_cache_ttl: 5m
-  #   metadata_cache_max_entries: 4096
 
 cache:
   # Derivative cache. Configure a filesystem root.
@@ -196,6 +189,9 @@ cache:
   # target before eviction runs, and metadata sidecar files are not counted.
   # 0 disables size-based eviction.
   max_bytes: 500GiB
+  # Optional age limit for derivative entries. Expired entries are removed on
+  # read and opportunistically during writes. 0 disables age-based eviction.
+  max_age: 720h
   # Optional filesystem source cache for fetched source bytes (primarily HTTP
   # identifiers).
   # source_root: /var/lib/triplet/source-cache

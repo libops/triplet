@@ -64,24 +64,25 @@ sources:
       - prefix: /system/files
         root: /private
         auth_probe: true
-        auth_anonymous_cache_ttl: 720h
-        auth_authenticated_cache_ttl: 168h
-        auth_error_cache_min_age: 5m
-        auth_cache_max_entries: 4096
+  http:
+    allowed_origins:
+      - https://repository.example.edu
+    metadata_cache_ttl: 168h
 ```
 
 The probe answers whether the original source URL would let this request read
 the file. Triplet uses that source response as the authority before serving the
 local copy or a cached derivative.
 
-Anonymous access is checked first. If the source allows anonymous access,
-Triplet caches that anonymous allow decision for the identifier and all callers
-can use it until the TTL expires. If anonymous access is denied and the incoming
-request has `Cookie` or `Authorization` headers, Triplet checks the source again
-with those headers. Credentialed decisions are cached separately by identifier
-and by the exact forwarded `Cookie` and `Authorization` header values, so two
-different sessions do not share one authenticated auth decision. A repeated
-request with the same headers uses the cached decision until its TTL expires.
+Anonymous access is checked first. If `sources.http.metadata_cache_ttl` is set
+and the source allows anonymous access, Triplet caches that anonymous allow
+decision for the identifier and all callers can use it until the TTL expires. If
+anonymous access is denied and the incoming request has `Cookie` or
+`Authorization` headers, Triplet checks the source again with those headers.
+Credentialed decisions are cached separately by identifier and by the exact
+forwarded `Cookie` and `Authorization` header values, so two different sessions
+do not share one authenticated auth decision. A repeated request with the same
+headers uses the cached decision until the TTL expires.
 
 Derivative bytes are shared after authorization. The authorization probe or
 auth-cache lookup happens before Triplet serves a derivative-cache hit, but the
@@ -148,11 +149,9 @@ authorization result:
 
 ## Auth decision TTLs
 
-Anonymous and authenticated probe decisions default to 5 minutes. Override them
-per mapping with `auth_anonymous_cache_ttl` and
-`auth_authenticated_cache_ttl`. If either tier-specific value is omitted,
-Triplet falls back to `auth_cache_ttl`. If that is also omitted, the tier uses
-the 5 minute default.
+Anonymous and authenticated probe decisions inherit
+`sources.http.metadata_cache_ttl`. Leave the TTL unset or `0` to disable
+auth-probe decision caching and recheck the upstream source on every request.
 
 Long TTLs are explicit access-staleness windows. They are appropriate when
 repository permissions change rarely or when the mapping is used for content
@@ -165,14 +164,10 @@ configured TTL. Other upstream errors are not cached.
 Negative auth-probe caching is conservative. For 401, 403, and 404 probe
 responses, Triplet checks the upstream `Last-Modified` header before caching the
 denial. If `Last-Modified` parses and is newer than
-`now - auth_error_cache_min_age`, the denial is not cached. This avoids holding a
-stale denial while repository access rules or file publication are still
-settling. If `Last-Modified` is absent, unparseable, or older than that minimum
-age window, the denial can be cached for the configured auth TTL.
-`auth_error_cache_min_age` defaults to 5 minutes; increase it when repository
-metadata and permissions are known to settle more slowly.
-
-`auth_cache_max_entries` defaults to 4096 entries when omitted.
+5 minutes ago, the denial is not cached. This avoids holding a stale denial
+while repository access rules or file publication are still settling. If
+`Last-Modified` is absent, unparseable, or older than that minimum age window,
+the denial can be cached for the configured auth TTL.
 
 The image cache invalidation route also clears matching auth-probe entries when
 the source backend supports it.

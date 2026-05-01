@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func writeConfig(t *testing.T, body string) string {
@@ -95,7 +96,6 @@ sources:
     allowed_origins: [https://example.org]
     max_bytes: 1048576
     metadata_cache_ttl: 24h
-    metadata_cache_max_entries: 4096
 `,
 		},
 		{
@@ -129,12 +129,9 @@ sources:
         root: /bar
         ocfl: true
         auth_probe: true
-        auth_anonymous_cache_ttl: 720h
-        auth_authenticated_cache_ttl: 168h
-        auth_error_cache_min_age: 5m
-        auth_cache_max_entries: 4096
   http:
     allowed_origins: [https://repo.example.edu]
+    metadata_cache_ttl: 5m
 `,
 		},
 		{
@@ -151,78 +148,6 @@ sources:
     allowed_origins: [https://repo.example.edu]
 `,
 			wantErr: "sources.file.url_mappings[0].root is required",
-		},
-		{
-			name: "file url mapping rejects negative auth ttl",
-			body: `
-server:
-  public_base_url: http://localhost:8080
-sources:
-  default: http
-  file:
-    url_mappings:
-      - prefix: https://repo.example.edu/system/files
-        root: /tmp
-        auth_probe: true
-        auth_cache_ttl: -1s
-  http:
-    allowed_origins: [https://repo.example.edu]
-`,
-			wantErr: "sources.file.url_mappings[0].auth_cache_ttl",
-		},
-		{
-			name: "file url mapping rejects negative authenticated auth ttl",
-			body: `
-server:
-  public_base_url: http://localhost:8080
-sources:
-  default: http
-  file:
-    url_mappings:
-      - prefix: https://repo.example.edu/system/files
-        root: /tmp
-        auth_probe: true
-        auth_authenticated_cache_ttl: -1s
-  http:
-    allowed_origins: [https://repo.example.edu]
-`,
-			wantErr: "sources.file.url_mappings[0].auth_authenticated_cache_ttl",
-		},
-		{
-			name: "file url mapping rejects negative auth error cache min age",
-			body: `
-server:
-  public_base_url: http://localhost:8080
-sources:
-  default: http
-  file:
-    url_mappings:
-      - prefix: https://repo.example.edu/system/files
-        root: /tmp
-        auth_probe: true
-        auth_error_cache_min_age: -1s
-  http:
-    allowed_origins: [https://repo.example.edu]
-`,
-			wantErr: "sources.file.url_mappings[0].auth_error_cache_min_age",
-		},
-		{
-			name: "file url mapping rejects negative auth max entries",
-			body: `
-server:
-  public_base_url: http://localhost:8080
-sources:
-  default: http
-  file:
-    url_mappings:
-      - prefix: https://repo.example.edu/system/files
-        root: /tmp
-        auth_probe: true
-        auth_cache_max_entries: -1
-  http:
-    allowed_origins: [https://repo.example.edu]
-`,
-			wantErr: "sources.file.url_mappings[0].auth_cache_max_entries",
 		},
 		{
 			name: "file url mapping requires http source",
@@ -336,19 +261,6 @@ sources:
     metadata_cache_ttl: -1s
 `,
 			wantErr: "sources.http.metadata_cache_ttl",
-		},
-		{
-			name: "http source rejects negative metadata cache max entries",
-			body: `
-server:
-  public_base_url: http://localhost:8080
-sources:
-  default: http
-  http:
-    allowed_origins: [https://example.org]
-    metadata_cache_max_entries: -1
-`,
-			wantErr: "sources.http.metadata_cache_max_entries",
 		},
 		{
 			name: "pprof enabled requires token",
@@ -711,6 +623,7 @@ sources:
     max_bytes: 50MiB
 cache:
   max_bytes: 500GiB
+  max_age: 720h
   source_max_bytes: 2GB
 extensions:
   transform:
@@ -731,6 +644,9 @@ extensions:
 	}
 	if c.Cache.MaxBytes != 500<<30 {
 		t.Errorf("Cache.MaxBytes = %d", c.Cache.MaxBytes)
+	}
+	if c.Cache.MaxAge != 720*time.Hour {
+		t.Errorf("Cache.MaxAge = %s", c.Cache.MaxAge)
 	}
 	if c.Cache.SourceMaxBytes != 2_000_000_000 {
 		t.Errorf("Cache.SourceMaxBytes = %d", c.Cache.SourceMaxBytes)
@@ -872,6 +788,23 @@ cache:
 	_, err := Load(path)
 	if err == nil || !strings.Contains(err.Error(), "cache.source_max_bytes") {
 		t.Fatalf("err = %v, want cache.source_max_bytes validation error", err)
+	}
+}
+
+func TestLoadRejectsNegativeCacheMaxAge(t *testing.T) {
+	path := writeConfig(t, `
+server:
+  public_base_url: http://localhost:8080
+sources:
+  default: file
+  file:
+    root: /tmp
+cache:
+  max_age: -1s
+`)
+	_, err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), "cache.max_age") {
+		t.Fatalf("err = %v, want cache.max_age validation error", err)
 	}
 }
 
