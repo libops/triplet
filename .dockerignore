@@ -3,6 +3,7 @@
 bin
 coverage.out
 results
+site
 
 deploy/compose/cache
 deploy/compose/images
