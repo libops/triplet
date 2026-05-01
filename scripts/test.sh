@@ -3,6 +3,7 @@
 set -euo pipefail
 
 IMAGE_TAG="${TRIPLET_TEST_IMAGE:-triplet-test:dev}"
+SKIP_IMAGE_BUILD="${TRIPLET_TEST_SKIP_BUILD:-0}"
 REQUIRE_INTEGRATION="${REQUIRE_INTEGRATION:-0}"
 COMPOSE_ARGS=()
 if [ -n "${COMPOSE_FILE:-}" ]; then
@@ -47,8 +48,16 @@ if [ "$REQUIRE_INTEGRATION" = "1" ] && [ "${#NETWORK_ARGS[@]}" -eq 0 ]; then
   exit 1
 fi
 
-echo "Building test image: $IMAGE_TAG"
-docker build --target test-runner -t "$IMAGE_TAG" .
+if [ "$SKIP_IMAGE_BUILD" = "1" ]; then
+  if ! docker image inspect "$IMAGE_TAG" >/dev/null 2>&1; then
+    echo "TRIPLET_TEST_SKIP_BUILD=1 but test image is missing: $IMAGE_TAG" >&2
+    exit 1
+  fi
+  echo "Using existing test image: $IMAGE_TAG"
+else
+  echo "Building test image: $IMAGE_TAG"
+  docker build --target test-runner -t "$IMAGE_TAG" .
+fi
 
 PKG_ARGS=("$@")
 if [ "${#PKG_ARGS[@]}" -eq 0 ]; then
