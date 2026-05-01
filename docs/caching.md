@@ -18,6 +18,42 @@ cache:
   max_bytes: 1073741824
 ```
 
+Derivative caches can be invalidated per identifier by configuring an image
+cache invalidation token and calling the protected route:
+
+```yaml
+iiif:
+  image:
+    cache_invalidation_token: ${TRIPLET_IMAGE_CACHE_INVALIDATION_TOKEN}
+    cache_invalidation_allowed_cidrs:
+      - 127.0.0.1/32
+      - ::1/128
+```
+
+If `TRIPLET_IMAGE_CACHE_INVALIDATION_TOKEN` is unset,
+`TRIPLET_IMAGE_CACHE_INVALIDATION_TOKEN_FILE` may point at a readable mounted
+secret file. Triplet reads that file before expanding the YAML configuration and
+uses its contents as `TRIPLET_IMAGE_CACHE_INVALIDATION_TOKEN`.
+
+When `cache_invalidation_allowed_cidrs` is set, callers must match one of those
+CIDRs in addition to presenting the bearer token. If Triplet runs behind a
+reverse proxy, configure `logging.trusted_proxy_cidrs`; only trusted proxies are
+allowed to supply the client IP via `X-Forwarded-For` or `X-Real-IP`.
+
+```sh
+curl -X POST \
+  -H "Authorization: Bearer ${TRIPLET_IMAGE_CACHE_INVALIDATION_TOKEN}" \
+  "https://iiif.example.edu/iiif/3/https%3A%2F%2Frepo.example.edu%2Fsystem%2Ffiles%2Fimage.tif/cache/invalidate"
+```
+
+The route writes an invalidation marker into the derivative cache. Subsequent
+image requests for that identifier use a new cache namespace, so old derivative
+objects are ignored even when the source bytes and metadata have not changed.
+This is useful for local URL mappings with `auth_probe: true`, where repository
+permission changes may need to take effect before the configured auth-probe TTL
+expires. When the source backend supports per-identifier auth caching, the same
+route also clears those cached auth-probe decisions for the identifier.
+
 ## Source cache
 
 The optional source cache stores fetched source bytes, primarily for HTTP
@@ -71,10 +107,10 @@ sources:
 
 | Layer | Configuration | What is cached | Invalidation / freshness |
 |---|---|---|---|
-| Derivative cache | `cache.root` or `cache.bucket_url`; optional `cache.max_bytes`, `cache.prefix` | Encoded IIIF image responses, keyed by identifier, source version, region, size, rotation, quality, and format. | A changed source version produces a new key. Filesystem caches can evict best-effort by size; GCS/object lifecycle is external. Failed transforms and HTTP error responses are not stored. |
+| Derivative cache | `cache.root` or `cache.bucket_url`; optional `cache.max_bytes`, `cache.prefix`, `iiif.image.cache_invalidation_token` | Encoded IIIF image responses, keyed by identifier, source version, invalidation marker, region, size, rotation, quality, and format. | A changed source version produces a new key. The protected invalidation route bumps the per-identifier invalidation marker. Filesystem caches can evict best-effort by size; GCS/object lifecycle is external. Failed transforms and HTTP error responses are not stored. |
 | HTTP source cache | `cache.source_root` or `cache.source_bucket_url`; optional `cache.source_max_bytes`, `cache.source_prefix`, `cache.source_stale_after` | Original source bytes fetched through the HTTP source backend. | Keys are source identifiers. When `source_stale_after` is set, stale hits are served immediately and refreshed in the background. Upstream 4xx/5xx responses are not stored. |
 | `info.json` dimension cache | `iiif.image.info_dimension_cache` | Source dimensions used to build Image API `info.json`. | In-memory only. Entries are keyed by identifier plus source size/modtime metadata, so source changes with updated metadata miss the cache. |
-| Local URL auth-probe cache | `sources.file.url_mappings[].auth_*` | Authorization probe results for local URL mappings with `auth_probe: true`. Anonymous and credentialed probes are cached separately. | In-memory only. Success, 403, and 404 results are cached for the configured TTL. Other upstream errors are not cached. 403/404 results with a `Last-Modified` newer than `auth_error_cache_min_age` are not cached. |
+| Local URL auth-probe cache | `sources.file.url_mappings[].auth_*` | Authorization probe results for local URL mappings with `auth_probe: true`. Anonymous and credentialed probes are cached separately. | In-memory only. Success, 403, and 404 results are cached for the configured TTL. Other upstream errors are not cached. 403/404 results with a `Last-Modified` newer than `auth_error_cache_min_age` are not cached. The image cache invalidation route also clears matching auth-probe entries when the source backend supports it. |
 | libvips operation cache | `vips.cache_max_mem`, `vips.cache_max_files` | libvips in-process operation results. | Disabled by default in the example config. This is process-local and separate from Triplet's derivative/source caches. |
 
 Source caching improves performance but does not replace the HTTP source

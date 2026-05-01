@@ -56,9 +56,10 @@ type LocalURLMapping struct {
 }
 
 type authCacheEntry struct {
-	scope     string
-	err       error
-	expiresAt time.Time
+	scope      string
+	identifier string
+	err        error
+	expiresAt  time.Time
 }
 
 var errAuthProbeHeadUnsupported = errors.New("auth probe head unsupported")
@@ -351,7 +352,7 @@ func (l *LocalURLFallback) probeCached(ctx context.Context, key, identifier stri
 	cacheable := cacheableAuthProbeResult(err) && cacheableAuthProbeResponse(err, respHeader, errorMinAge, time.Now())
 	l.debug(ctx, "local url auth probe completed", identifier, "cache_key", redact.Hash(key), "cacheable", cacheable, "ttl", ttl.String(), "err", err)
 	if ttl > 0 && cacheable {
-		l.storeAuth(key, authCacheScope(key), err, ttl, maxEntries)
+		l.storeAuth(key, authCacheScope(key), identifier, err, ttl, maxEntries)
 	}
 	l.finishAuthProbe(key, err)
 	return err
@@ -452,14 +453,26 @@ func (l *LocalURLFallback) cachedAuth(key string) (error, bool) {
 	return entry.err, true
 }
 
-func (l *LocalURLFallback) storeAuth(key, scope string, err error, ttl time.Duration, maxEntries int) {
+func (l *LocalURLFallback) storeAuth(key, scope, identifier string, err error, ttl time.Duration, maxEntries int) {
 	l.authMu.Lock()
 	defer l.authMu.Unlock()
 	if l.auth == nil {
 		l.auth = map[string]authCacheEntry{}
 	}
 	l.evictAuthLocked(scope, maxEntries)
-	l.auth[key] = authCacheEntry{scope: scope, err: err, expiresAt: time.Now().Add(ttl)}
+	l.auth[key] = authCacheEntry{scope: scope, identifier: identifier, err: err, expiresAt: time.Now().Add(ttl)}
+}
+
+// InvalidateAuth clears cached authorization probe results for identifier.
+func (l *LocalURLFallback) InvalidateAuth(_ context.Context, identifier string) error {
+	l.authMu.Lock()
+	defer l.authMu.Unlock()
+	for key, entry := range l.auth {
+		if entry.identifier == identifier {
+			delete(l.auth, key)
+		}
+	}
+	return nil
 }
 
 func (l *LocalURLFallback) evictAuthLocked(scope string, maxEntries int) {

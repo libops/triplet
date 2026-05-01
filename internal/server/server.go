@@ -47,6 +47,14 @@ func Build(cfg *config.Config, logger *slog.Logger) (*http.Server, error) {
 	}()
 
 	mux := http.NewServeMux()
+	trustedProxies, err := trustedProxyCIDRs(cfg.Logging.TrustedProxyCIDRs)
+	if err != nil {
+		return nil, err
+	}
+	imageInvalidationCIDRs, err := parseCIDRs("iiif.image.cache_invalidation_allowed_cidrs", cfg.IIIF.Image.CacheInvalidationAllowedCIDRs)
+	if err != nil {
+		return nil, err
+	}
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
@@ -93,6 +101,9 @@ func Build(cfg *config.Config, logger *slog.Logger) (*http.Server, error) {
 			pipe,
 			derivCache,
 			imageAllowedOrigins(cfg),
+			cfg.IIIF.Image.CacheInvalidationToken,
+			imageInvalidationCIDRs,
+			trustedProxies,
 			imgtypes.Limits{
 				MaxArea:   cfg.IIIF.Image.MaxOutputPixels,
 				MaxWidth:  cfg.IIIF.Image.MaxWidth,
@@ -142,10 +153,6 @@ func Build(cfg *config.Config, logger *slog.Logger) (*http.Server, error) {
 
 	var handler http.Handler = mux
 	handler = metrics.Middleware(handler)
-	trustedProxies, err := trustedProxyCIDRs(cfg.Logging.TrustedProxyCIDRs)
-	if err != nil {
-		return nil, err
-	}
 	handler = observability.LoggingMiddleware(logger, observability.LoggingOptions{
 		TrustedProxies: trustedProxies,
 	})(handler)
@@ -202,11 +209,15 @@ func pprofHandler(token string, next http.HandlerFunc) http.HandlerFunc {
 }
 
 func trustedProxyCIDRs(raw []string) ([]*net.IPNet, error) {
+	return parseCIDRs("logging.trusted_proxy_cidrs", raw)
+}
+
+func parseCIDRs(name string, raw []string) ([]*net.IPNet, error) {
 	cidrs := make([]*net.IPNet, 0, len(raw))
 	for _, value := range raw {
 		_, cidr, err := net.ParseCIDR(value)
 		if err != nil {
-			return nil, fmt.Errorf("logging.trusted_proxy_cidrs: invalid CIDR %q: %w", value, err)
+			return nil, fmt.Errorf("%s: invalid CIDR %q: %w", name, value, err)
 		}
 		cidrs = append(cidrs, cidr)
 	}

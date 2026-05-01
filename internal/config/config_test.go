@@ -511,6 +511,21 @@ sources:
 			wantErr: "iiif.image.allowed_origins",
 		},
 		{
+			name: "image cache invalidation cidr invalid",
+			body: `
+server:
+  public_base_url: http://localhost:8080
+iiif:
+  image:
+    cache_invalidation_allowed_cidrs: [not-a-cidr]
+sources:
+  default: file
+  file:
+    root: /tmp
+`,
+			wantErr: "iiif.image.cache_invalidation_allowed_cidrs",
+		},
+		{
 			name: "explicit unlimited output pixels requires unsafe opt-in",
 			body: `
 server:
@@ -543,6 +558,85 @@ sources:
 				t.Fatalf("error %q does not contain %q", err.Error(), tc.wantErr)
 			}
 		})
+	}
+}
+
+func TestLoadImageCacheInvalidationTokenFromFile(t *testing.T) {
+	t.Setenv("TRIPLET_IMAGE_CACHE_INVALIDATION_TOKEN", "")
+	dir := t.TempDir()
+	tokenPath := filepath.Join(dir, "image-cache-token")
+	if err := os.WriteFile(tokenPath, []byte("file-token\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TRIPLET_IMAGE_CACHE_INVALIDATION_TOKEN_FILE", tokenPath)
+	path := writeConfig(t, `
+server:
+  public_base_url: http://localhost:8080
+iiif:
+  image:
+    cache_invalidation_token: ${TRIPLET_IMAGE_CACHE_INVALIDATION_TOKEN}
+sources:
+  default: file
+  file:
+    root: /tmp
+`)
+
+	c, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := c.IIIF.Image.CacheInvalidationToken; got != "file-token" {
+		t.Fatalf("cache_invalidation_token = %q", got)
+	}
+	if got := os.Getenv("TRIPLET_IMAGE_CACHE_INVALIDATION_TOKEN"); got != "" {
+		t.Fatalf("TRIPLET_IMAGE_CACHE_INVALIDATION_TOKEN was mutated to %q", got)
+	}
+}
+
+func TestLoadImageCacheInvalidationTokenEnvOverridesFile(t *testing.T) {
+	t.Setenv("TRIPLET_IMAGE_CACHE_INVALIDATION_TOKEN", "env-token")
+	dir := t.TempDir()
+	tokenPath := filepath.Join(dir, "image-cache-token")
+	if err := os.WriteFile(tokenPath, []byte("file-token\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TRIPLET_IMAGE_CACHE_INVALIDATION_TOKEN_FILE", tokenPath)
+	path := writeConfig(t, `
+server:
+  public_base_url: http://localhost:8080
+iiif:
+  image:
+    cache_invalidation_token: ${TRIPLET_IMAGE_CACHE_INVALIDATION_TOKEN}
+sources:
+  default: file
+  file:
+    root: /tmp
+`)
+
+	c, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := c.IIIF.Image.CacheInvalidationToken; got != "env-token" {
+		t.Fatalf("cache_invalidation_token = %q", got)
+	}
+}
+
+func TestLoadImageCacheInvalidationTokenFileMissing(t *testing.T) {
+	t.Setenv("TRIPLET_IMAGE_CACHE_INVALIDATION_TOKEN", "")
+	t.Setenv("TRIPLET_IMAGE_CACHE_INVALIDATION_TOKEN_FILE", filepath.Join(t.TempDir(), "missing"))
+	path := writeConfig(t, `
+server:
+  public_base_url: http://localhost:8080
+sources:
+  default: file
+  file:
+    root: /tmp
+`)
+
+	_, err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), "TRIPLET_IMAGE_CACHE_INVALIDATION_TOKEN_FILE") {
+		t.Fatalf("err = %v, want token file error", err)
 	}
 }
 

@@ -87,6 +87,8 @@ type Image struct {
 	Enabled                          bool     `yaml:"enabled"`
 	Prefix                           string   `yaml:"prefix"`
 	AllowedOrigins                   []string `yaml:"allowed_origins"`
+	CacheInvalidationToken           string   `yaml:"cache_invalidation_token"`
+	CacheInvalidationAllowedCIDRs    []string `yaml:"cache_invalidation_allowed_cidrs"`
 	MaxOutputPixels                  int64    `yaml:"max_output_pixels"`
 	AllowUnsafeUnlimitedOutputPixels bool     `yaml:"allow_unsafe_unlimited_output_pixels"`
 	MaxSourcePixels                  int64    `yaml:"max_source_pixels"`
@@ -203,7 +205,11 @@ func Load(path string) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read config %q: %w", path, err)
 	}
-	expanded := os.ExpandEnv(string(b))
+	env, err := configEnv()
+	if err != nil {
+		return nil, fmt.Errorf("load image cache invalidation token file: %w", err)
+	}
+	expanded := os.Expand(string(b), env)
 	explicitUnlimitedOutput, err := explicitZeroYAMLField([]byte(expanded), "iiif", "image", "max_output_pixels")
 	if err != nil {
 		return nil, fmt.Errorf("parse config %q: %w", path, err)
@@ -222,6 +228,36 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("validate config %q: %w", path, err)
 	}
 	return &c, nil
+}
+
+func configEnv() (func(string) string, error) {
+	token, err := imageCacheInvalidationTokenEnv()
+	if err != nil {
+		return nil, err
+	}
+	return func(key string) string {
+		if key == "TRIPLET_IMAGE_CACHE_INVALIDATION_TOKEN" && token != "" {
+			return token
+		}
+		return os.Getenv(key)
+	}, nil
+}
+
+func imageCacheInvalidationTokenEnv() (string, error) {
+	const tokenEnv = "TRIPLET_IMAGE_CACHE_INVALIDATION_TOKEN"
+	const fileEnv = tokenEnv + "_FILE"
+	if token := os.Getenv(tokenEnv); token != "" {
+		return token, nil
+	}
+	path := strings.TrimSpace(os.Getenv(fileEnv))
+	if path == "" {
+		return "", nil
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", fileEnv, err)
+	}
+	return strings.TrimRight(string(b), "\r\n"), nil
 }
 
 func explicitZeroYAMLField(body []byte, path ...string) (bool, error) {
@@ -384,6 +420,11 @@ func (c *Config) validate() error {
 	}
 	if err := validateAllowedOrigins("iiif.image.allowed_origins", c.IIIF.Image.AllowedOrigins); err != nil {
 		return err
+	}
+	for _, cidr := range c.IIIF.Image.CacheInvalidationAllowedCIDRs {
+		if _, _, err := net.ParseCIDR(cidr); err != nil {
+			return fmt.Errorf("iiif.image.cache_invalidation_allowed_cidrs: invalid CIDR %q: %w", cidr, err)
+		}
 	}
 	if !strings.HasPrefix(c.IIIF.Presentation.Prefix, "/") {
 		return fmt.Errorf("iiif.presentation.prefix: must start with `/`, got %q", c.IIIF.Presentation.Prefix)

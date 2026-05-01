@@ -10,6 +10,7 @@ import (
 	"image/png"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -19,6 +20,7 @@ import (
 	"time"
 
 	"github.com/libops/triplet/internal/cache"
+	"github.com/libops/triplet/internal/cors"
 	"github.com/libops/triplet/internal/iiif/image/v3/pipeline"
 	"github.com/libops/triplet/internal/iiif/image/v3/types"
 	"github.com/libops/triplet/internal/storage"
@@ -29,14 +31,14 @@ func setupTestServer(t *testing.T) (*httptest.Server, string) {
 }
 
 func setupTestServerWithCache(t *testing.T, derivCache cache.Store) (*httptest.Server, string) {
-	return setupTestServerWithOptions(t, derivCache, nil)
+	return setupTestServerWithOptions(t, derivCache, nil, "")
 }
 
 func setupTestServerWithAllowedOrigins(t *testing.T, allowedOrigins []string) (*httptest.Server, string) {
-	return setupTestServerWithOptions(t, cache.Noop{}, allowedOrigins)
+	return setupTestServerWithOptions(t, cache.Noop{}, allowedOrigins, "")
 }
 
-func setupTestServerWithOptions(t *testing.T, derivCache cache.Store, allowedOrigins []string) (*httptest.Server, string) {
+func setupTestServerWithOptions(t *testing.T, derivCache cache.Store, allowedOrigins []string, invalidationToken string) (*httptest.Server, string) {
 	t.Helper()
 	root := t.TempDir()
 	img := image.NewRGBA(image.Rect(0, 0, 200, 100))
@@ -60,6 +62,9 @@ func setupTestServerWithOptions(t *testing.T, derivCache cache.Store, allowedOri
 		pipeline.New(op, pipeline.Limits{MaxOutputPixels: 10_000_000}),
 		derivCache,
 		allowedOrigins,
+		invalidationToken,
+		nil,
+		nil,
 		types.Limits{MaxArea: 10_000_000, MaxWidth: 4096, MaxHeight: 4096},
 		true,
 		250_000_000,
@@ -223,6 +228,9 @@ func TestPipelineErrorUsesGenericResponse(t *testing.T) {
 		pipeline.New(op, pipeline.Limits{MaxOutputPixels: 10_000_000}),
 		cache.Noop{},
 		nil,
+		"",
+		nil,
+		nil,
 		types.Limits{MaxArea: 10_000_000},
 		true,
 		250_000_000,
@@ -274,6 +282,9 @@ func TestDerivativeCacheFailureWarns(t *testing.T) {
 		op,
 		pipeline.New(op, pipeline.Limits{MaxOutputPixels: 10_000_000}),
 		failingCache{},
+		nil,
+		"",
+		nil,
 		nil,
 		types.Limits{MaxArea: 10_000_000},
 		true,
@@ -498,6 +509,196 @@ func TestImageRequestETagChangesWhenSourceChanges(t *testing.T) {
 	}
 	if got := second.Header.Get("X-Cache"); got != "miss" {
 		t.Fatalf("X-Cache = %q", got)
+	}
+}
+
+func TestCacheInvalidationRequiresBearerToken(t *testing.T) {
+	store := newMemoryStore()
+	srv, _ := setupTestServerWithOptions(t, store, nil, "test-token")
+	defer srv.Close()
+
+	resp, err := http.Post(srv.URL+"/iiif/3/sample.png/cache/invalidate", "application/json", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	if got := resp.Header.Get("WWW-Authenticate"); got != `Bearer realm="triplet-image-cache"` {
+		t.Fatalf("WWW-Authenticate = %q", got)
+	}
+}
+
+func TestCacheInvalidationDisabledWithoutToken(t *testing.T) {
+	store := newMemoryStore()
+	srv, _ := setupTestServerWithOptions(t, store, nil, "")
+	defer srv.Close()
+
+	resp, err := http.Post(srv.URL+"/iiif/3/sample.png/cache/invalidate", "application/json", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+}
+
+func TestImageRequestDoesNotCheckInvalidationMarkerWhenDisabled(t *testing.T) {
+	store := newMemoryStore()
+	store.data[invalidationMarkerKey("sample.png")] = []byte("unexpected-version")
+	store.meta[invalidationMarkerKey("sample.png")] = cache.Entry{StoredAt: time.Now()}
+	srv, _ := setupTestServerWithOptions(t, store, nil, "")
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/iiif/3/sample.png/full/max/0/default.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	firstETag := resp.Header.Get("ETag")
+	if firstETag == "" {
+		t.Fatal("missing first ETag")
+	}
+
+	delete(store.data, invalidationMarkerKey("sample.png"))
+	delete(store.meta, invalidationMarkerKey("sample.png"))
+	resp, err = http.Get(srv.URL + "/iiif/3/sample.png/full/max/0/default.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("second status = %d", resp.StatusCode)
+	}
+	if got := resp.Header.Get("ETag"); got != firstETag {
+		t.Fatalf("ETag = %q, want %q", got, firstETag)
+	}
+}
+
+func TestCacheInvalidationChangesDerivativeKey(t *testing.T) {
+	store := newMemoryStore()
+	srv, _ := setupTestServerWithOptions(t, store, nil, "test-token")
+	defer srv.Close()
+
+	imageURL := srv.URL + "/iiif/3/sample.png/full/max/0/default.png"
+	first, err := http.Get(imageURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.Body.Close()
+	if first.StatusCode != http.StatusOK {
+		t.Fatalf("first status = %d", first.StatusCode)
+	}
+	firstETag := first.Header.Get("ETag")
+	if firstETag == "" {
+		t.Fatal("missing first ETag")
+	}
+
+	second, err := http.Get(imageURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Body.Close()
+	if second.StatusCode != http.StatusOK {
+		t.Fatalf("second status = %d", second.StatusCode)
+	}
+	if got := second.Header.Get("X-Cache"); got != "hit" {
+		t.Fatalf("second X-Cache = %q", got)
+	}
+	if got := second.Header.Get("ETag"); got != firstETag {
+		t.Fatalf("second ETag = %q, want %q", got, firstETag)
+	}
+
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/iiif/3/sample.png/cache/invalidate", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer test-token")
+	invalidate, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer invalidate.Body.Close()
+	if invalidate.StatusCode != http.StatusNoContent {
+		t.Fatalf("invalidate status = %d", invalidate.StatusCode)
+	}
+
+	third, err := http.Get(imageURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer third.Body.Close()
+	if third.StatusCode != http.StatusOK {
+		t.Fatalf("third status = %d", third.StatusCode)
+	}
+	if got := third.Header.Get("X-Cache"); got != "miss" {
+		t.Fatalf("third X-Cache = %q", got)
+	}
+	if got := third.Header.Get("ETag"); got == "" || got == firstETag {
+		t.Fatalf("third ETag = %q, first = %q", got, firstETag)
+	}
+}
+
+func TestCacheInvalidationRejectsDisallowedCIDR(t *testing.T) {
+	store := newMemoryStore()
+	_, cidr, err := net.ParseCIDR("203.0.113.0/24")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := &Handler{
+		prefix:            "/iiif/3",
+		derivativeCache:   store,
+		cors:              cors.New(nil, exposeHeaders),
+		invalidationToken: "test-token",
+		invalidationCIDRs: []*net.IPNet{cidr},
+		infoCache:         map[string]cachedDimensions{},
+		logger:            slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	req := httptest.NewRequest(http.MethodPost, "/iiif/3/sample.png/cache/invalidate", nil)
+	req.RemoteAddr = "198.51.100.10:12345"
+	req.Header.Set("Authorization", "Bearer test-token")
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d", rec.Code)
+	}
+}
+
+func TestCacheInvalidationAllowsTrustedForwardedCIDR(t *testing.T) {
+	store := newMemoryStore()
+	_, allowed, err := net.ParseCIDR("203.0.113.0/24")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, trustedProxy, err := net.ParseCIDR("192.0.2.0/24")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := &Handler{
+		prefix:            "/iiif/3",
+		derivativeCache:   store,
+		cors:              cors.New(nil, exposeHeaders),
+		invalidationToken: "test-token",
+		invalidationCIDRs: []*net.IPNet{allowed},
+		trustedProxies:    []*net.IPNet{trustedProxy},
+		infoCache:         map[string]cachedDimensions{},
+		logger:            slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	req := httptest.NewRequest(http.MethodPost, "/iiif/3/sample.png/cache/invalidate", nil)
+	req.RemoteAddr = "192.0.2.10:12345"
+	req.Header.Set("X-Forwarded-For", "203.0.113.9")
+	req.Header.Set("Authorization", "Bearer test-token")
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d", rec.Code)
 	}
 }
 

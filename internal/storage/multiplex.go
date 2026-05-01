@@ -48,6 +48,20 @@ func (m *Multiplex) Meta(ctx context.Context, identifier string) (Meta, error) {
 	return metaReader.Meta(ctx, identifier)
 }
 
+// InvalidateAuth forwards auth-cache invalidation to the selected opener when
+// it supports per-identifier auth state.
+func (m *Multiplex) InvalidateAuth(ctx context.Context, identifier string) error {
+	opener, err := m.route(identifier)
+	if err != nil {
+		return err
+	}
+	invalidator, ok := opener.(AuthInvalidator)
+	if !ok {
+		return nil
+	}
+	return invalidator.InvalidateAuth(ctx, identifier)
+}
+
 func (m *Multiplex) route(identifier string) (Opener, error) {
 	for _, r := range m.Routes {
 		if r.HasPrefix != "" && strings.HasPrefix(identifier, r.HasPrefix) {
