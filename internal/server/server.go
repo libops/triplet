@@ -293,6 +293,13 @@ func buildSource(cfg *config.Config, logger *slog.Logger) (storage.Opener, func(
 				RefreshContext: refreshCtx,
 			}
 		}
+		if cfg.Sources.HTTP.MetadataCacheTTL > 0 {
+			httpOp = &storage.MetaCaching{
+				Inner:      httpOp,
+				TTL:        cfg.Sources.HTTP.MetadataCacheTTL,
+				MaxEntries: cfg.Sources.HTTP.MetadataCacheMaxEntries,
+			}
+		}
 		localURLMappings, err := buildLocalURLMappings(cfg, fileOp)
 		if err != nil {
 			return nil, nil, err

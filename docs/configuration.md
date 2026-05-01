@@ -217,8 +217,20 @@ sources:
     allow_private_hosts: false
     request_timeout: 2m
     max_bytes: 50MiB
+    metadata_cache_ttl: 5m
+    metadata_cache_max_entries: 4096
 ```
 
 The HTTP host allowlist is a source-fetch boundary. See
 [Authorization](authorization.md#source-fetch-boundary) for origin, redirect,
 private host, and DNS rebinding behavior.
+
+`metadata_cache_ttl` gives remote URL identifiers the same kind of explicit
+staleness window that local URL auth-probe mappings use. While a remote
+identifier's metadata cache entry is fresh, Triplet can build derivative cache
+keys from cached `ETag`, `Last-Modified`, and size metadata instead of making a
+new upstream `HEAD` or range request before checking the derivative cache. If
+the upstream source changes, disappears, or changes authorization during that
+TTL, Triplet may continue serving the locally cached derivative until the
+metadata entry expires. Leave the TTL unset or `0` when every derivative request
+must revalidate source metadata upstream.

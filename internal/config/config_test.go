@@ -94,6 +94,8 @@ sources:
   http:
     allowed_origins: [https://example.org]
     max_bytes: 1048576
+    metadata_cache_ttl: 24h
+    metadata_cache_max_entries: 4096
 `,
 		},
 		{
@@ -321,6 +323,32 @@ sources:
     allowed_origins: [example.org]
 `,
 			wantErr: "sources.http.allowed_origins",
+		},
+		{
+			name: "http source rejects negative metadata cache ttl",
+			body: `
+server:
+  public_base_url: http://localhost:8080
+sources:
+  default: http
+  http:
+    allowed_origins: [https://example.org]
+    metadata_cache_ttl: -1s
+`,
+			wantErr: "sources.http.metadata_cache_ttl",
+		},
+		{
+			name: "http source rejects negative metadata cache max entries",
+			body: `
+server:
+  public_base_url: http://localhost:8080
+sources:
+  default: http
+  http:
+    allowed_origins: [https://example.org]
+    metadata_cache_max_entries: -1
+`,
+			wantErr: "sources.http.metadata_cache_max_entries",
 		},
 		{
 			name: "pprof enabled requires token",

@@ -141,10 +141,12 @@ type FileURLMapping struct {
 
 // HTTPSource resolves identifiers that are HTTP(S) URLs.
 type HTTPSource struct {
-	AllowedOrigins    []string      `yaml:"allowed_origins"`
-	AllowPrivateHosts bool          `yaml:"allow_private_hosts"`
-	RequestTimeout    time.Duration `yaml:"request_timeout"`
-	MaxBytes          ByteSize      `yaml:"max_bytes"`
+	AllowedOrigins          []string      `yaml:"allowed_origins"`
+	AllowPrivateHosts       bool          `yaml:"allow_private_hosts"`
+	RequestTimeout          time.Duration `yaml:"request_timeout"`
+	MaxBytes                ByteSize      `yaml:"max_bytes"`
+	MetadataCacheTTL        time.Duration `yaml:"metadata_cache_ttl"`
+	MetadataCacheMaxEntries int           `yaml:"metadata_cache_max_entries"`
 }
 
 // Cache declares optional derivative-cache settings.
@@ -449,6 +451,12 @@ func (c *Config) validate() error {
 		}
 		if c.Sources.HTTP.MaxBytes < 0 {
 			return errors.New("sources.http.max_bytes: must be >= 0")
+		}
+		if c.Sources.HTTP.MetadataCacheTTL < 0 {
+			return errors.New("sources.http.metadata_cache_ttl: must be >= 0")
+		}
+		if c.Sources.HTTP.MetadataCacheMaxEntries < 0 {
+			return errors.New("sources.http.metadata_cache_max_entries: must be >= 0")
 		}
 	}
 	if c.Sources.File != nil {

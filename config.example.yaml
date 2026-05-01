@@ -179,6 +179,13 @@ sources:
   #   allow_private_hosts: false
   #   request_timeout: 2m
   #   max_bytes: 50MiB
+  #   # Optional in-process metadata cache for remote URL identifiers. This lets
+  #   # derivative cache hits reuse recent ETag/Last-Modified/size metadata
+  #   # instead of making a HEAD or range request to the upstream source every
+  #   # time. During this TTL, Triplet may serve a cached derivative without
+  #   # noticing that the remote source changed or disappeared.
+  #   metadata_cache_ttl: 5m
+  #   metadata_cache_max_entries: 4096
 
 cache:
   # Derivative cache. Configure a filesystem root.

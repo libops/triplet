@@ -73,6 +73,25 @@ cache:
 When `source_stale_after` is set, stale hits are served immediately and refreshed
 in the background. Upstream 4xx/5xx responses are not stored.
 
+## HTTP metadata cache
+
+Remote URL identifiers need source metadata to build derivative cache keys. By
+default, Triplet revalidates that metadata with the upstream source before it
+checks the derivative cache. Configure `sources.http.metadata_cache_ttl` to
+allow recent metadata to stand in for that upstream `HEAD` or range request:
+
+```yaml
+sources:
+  http:
+    metadata_cache_ttl: 5m
+    metadata_cache_max_entries: 4096
+```
+
+This is an explicit staleness window. While metadata is cached, a derivative
+cache hit can be served without touching the remote source. If the remote source
+changes, disappears, or changes authorization during the TTL, Triplet may serve
+the cached derivative until the metadata entry expires.
+
 ## Authorization decision cache
 
 Local URL mappings with `auth_probe: true` cache anonymous and credentialed
@@ -118,6 +137,7 @@ derivative and source caches.
 |---|---|---|---|
 | Derivative cache | `cache.root`; optional `cache.max_bytes`, `iiif.image.cache_invalidation_token` | Encoded IIIF image responses, keyed by identifier, source version, invalidation marker, region, size, rotation, quality, and format. | A changed source version produces a new key. The protected invalidation route bumps the per-identifier invalidation marker. `cache.max_bytes` is a best-effort aggregate cache budget; `iiif.image.max_derivative_bytes` is the per-response size limit before return/cache. Failed transforms and HTTP error responses are not stored. |
 | HTTP source cache | `cache.source_root`; optional `cache.source_max_bytes`, `cache.source_stale_after` | Original source bytes fetched through the HTTP source backend. | Keys are source identifiers. When `source_stale_after` is set, stale hits are served immediately and refreshed in the background. Upstream 4xx/5xx responses are not stored. |
+| HTTP metadata cache | `sources.http.metadata_cache_ttl`; optional `sources.http.metadata_cache_max_entries` | Successful remote source metadata lookups for URL identifiers. | In-memory only. While fresh, derivative cache checks can avoid upstream metadata requests. This can serve stale derivatives until the TTL expires. |
 | `info.json` dimension cache | `iiif.image.info_dimension_cache` | Source dimensions used to build Image API `info.json`. | In-memory only. Entries are keyed by identifier plus source size/modtime metadata, so source changes with updated metadata miss the cache. |
 | Local URL auth-probe cache | `sources.file.url_mappings[].auth_*` | Authorization probe results for local URL mappings with `auth_probe: true`. Anonymous and credentialed probes are cached separately. See [Authorization](authorization.md). | In-memory only. Tier defaults are 5 minutes unless overridden by `auth_anonymous_cache_ttl`, `auth_authenticated_cache_ttl`, or `auth_cache_ttl`. The image cache invalidation route also clears matching auth-probe entries when the source backend supports it. |
 | libvips operation cache | `vips.cache_max_mem`, `vips.cache_max_files` | libvips in-process operation results. | Disabled by default in the example config. This is process-local and separate from Triplet's derivative/source caches. |
