@@ -1,8 +1,12 @@
 bin/
 build/
 dist/
+docs/site/
 coverage.out
+go.work
+go.work.sum
 *.test
+__pycache__/
 .DS_Store
 .idea/
 .vscode/
