@@ -146,16 +146,7 @@ func (s *FileStore) Put(_ context.Context, key, contentType string, value io.Rea
 		return err
 	}
 	if s.storeContentType {
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		if err := os.Rename(tmpName, dataPath); err != nil {
-			_ = os.Remove(tmpName)
-			return err
-		}
-		meta := fileMeta{ContentType: contentType}
-		mb, _ := json.Marshal(meta)
-		if err := os.WriteFile(metaPath, mb, 0o640); err != nil {
-			_ = os.Remove(dataPath)
+		if err := s.installWithMeta(tmpName, dataPath, metaPath, contentType); err != nil {
 			return err
 		}
 	} else if err := os.Rename(tmpName, dataPath); err != nil {
@@ -164,6 +155,23 @@ func (s *FileStore) Put(_ context.Context, key, contentType string, value io.Rea
 	}
 	if s.MaxAge > 0 || s.MaxBytes > 0 {
 		s.evict()
+	}
+	return nil
+}
+
+func (s *FileStore) installWithMeta(tmpName, dataPath, metaPath, contentType string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if err := os.Rename(tmpName, dataPath); err != nil {
+		_ = os.Remove(tmpName)
+		return err
+	}
+	meta := fileMeta{ContentType: contentType}
+	mb, _ := json.Marshal(meta)
+	if err := os.WriteFile(metaPath, mb, 0o640); err != nil {
+		_ = os.Remove(dataPath)
+		return err
 	}
 	return nil
 }
