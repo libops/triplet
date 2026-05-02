@@ -55,6 +55,45 @@ func TestFileStorePutGetDelete(t *testing.T) {
 	}
 }
 
+func TestPayloadFileStorePutGetDelete(t *testing.T) {
+	store, err := NewPayloadFileStoreWithMaxAge(t.TempDir(), 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := store.Put(context.Background(), "abc", "image/png", strings.NewReader("payload")); err != nil {
+		t.Fatal(err)
+	}
+
+	rc, entry, err := store.Get(context.Background(), "abc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rc.Close()
+
+	b, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) != "payload" {
+		t.Fatalf("body = %q", string(b))
+	}
+	if entry.ContentType != "" {
+		t.Fatalf("content-type = %q, want empty", entry.ContentType)
+	}
+	if entry.Size != int64(len("payload")) {
+		t.Fatalf("size = %d", entry.Size)
+	}
+	if entry.StoredAt.IsZero() {
+		t.Fatal("stored_at was zero")
+	}
+
+	_, metaPath := store.paths("abc")
+	if _, err := os.Stat(metaPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("meta stat err = %v, want not exist", err)
+	}
+}
+
 func TestFileStoreMissDoesNotCreateKeyDirectory(t *testing.T) {
 	root := t.TempDir()
 	store, err := NewFileStore(root, 0)

@@ -21,6 +21,7 @@ import (
 // characters and still be safe filenames.
 type FileStore struct {
 	Root string
+	StoreContentType bool
 
 	// MaxBytes optionally bounds total cache size; when exceeded, the
 	// oldest payload files are evicted on the next Put based on mtime.
@@ -42,7 +43,7 @@ func NewFileStore(root string, maxBytes int64) (*FileStore, error) {
 	if err := os.MkdirAll(abs, 0o750); err != nil {
 		return nil, fmt.Errorf("cache file mkdir: %w", err)
 	}
-	return &FileStore{Root: abs, MaxBytes: maxBytes}, nil
+	return &FileStore{Root: abs, StoreContentType: true, MaxBytes: maxBytes}, nil
 }
 
 // NewFileStoreWithMaxAge constructs a FileStore with size and age eviction.
@@ -55,6 +56,19 @@ func NewFileStoreWithMaxAge(root string, maxBytes int64, maxAge time.Duration) (
 	return store, nil
 }
 
+// NewPayloadFileStoreWithMaxAge constructs a payload-only FileStore. It stores
+// content type out of band in the caller and uses payload file metadata for
+// age and size accounting.
+func NewPayloadFileStoreWithMaxAge(root string, maxBytes int64, maxAge time.Duration) (*FileStore, error) {
+	store, err := NewFileStore(root, maxBytes)
+	if err != nil {
+		return nil, err
+	}
+	store.StoreContentType = false
+	store.MaxAge = maxAge
+	return store, nil
+}
+
 type fileMeta struct {
 	ContentType string `json:"content_type"`
 }
@@ -62,16 +76,20 @@ type fileMeta struct {
 // Get implements Store.
 func (s *FileStore) Get(_ context.Context, key string) (io.ReadCloser, Entry, error) {
 	dataPath, metaPath := s.paths(key)
-	mb, err := os.ReadFile(metaPath)
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return nil, Entry{}, ErrMiss
+	contentType := ""
+	if s.StoreContentType {
+		mb, err := os.ReadFile(metaPath)
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				return nil, Entry{}, ErrMiss
+			}
+			return nil, Entry{}, err
 		}
-		return nil, Entry{}, err
-	}
-	var m fileMeta
-	if err := json.Unmarshal(mb, &m); err != nil {
-		return nil, Entry{}, fmt.Errorf("cache meta: %w", err)
+		var m fileMeta
+		if err := json.Unmarshal(mb, &m); err != nil {
+			return nil, Entry{}, fmt.Errorf("cache meta: %w", err)
+		}
+		contentType = m.ContentType
 	}
 	f, err := os.Open(dataPath)
 	if err != nil {
@@ -93,7 +111,7 @@ func (s *FileStore) Get(_ context.Context, key string) (io.ReadCloser, Entry, er
 		return nil, Entry{}, ErrMiss
 	}
 	return f, Entry{
-		ContentType: m.ContentType,
+		ContentType: contentType,
 		Size:        info.Size(),
 		StoredAt:    storedAt,
 	}, nil
@@ -126,10 +144,12 @@ func (s *FileStore) Put(_ context.Context, key, contentType string, value io.Rea
 	}
 	storedAt := time.Now()
 	_ = os.Chtimes(dataPath, storedAt, storedAt)
-	meta := fileMeta{ContentType: contentType}
-	mb, _ := json.Marshal(meta)
-	if err := os.WriteFile(metaPath, mb, 0o640); err != nil {
-		return err
+	if s.StoreContentType {
+		meta := fileMeta{ContentType: contentType}
+		mb, _ := json.Marshal(meta)
+		if err := os.WriteFile(metaPath, mb, 0o640); err != nil {
+			return err
+		}
 	}
 	if s.MaxAge > 0 || s.MaxBytes > 0 {
 		s.evict()
@@ -178,16 +198,20 @@ func (s *FileStore) evict() {
 			return nil
 		}
 		metaPath := p + ".meta"
-		if _, err := os.Stat(metaPath); err != nil {
-			if errors.Is(err, fs.ErrNotExist) {
-				_ = os.Remove(p)
+		if s.StoreContentType {
+			if _, err := os.Stat(metaPath); err != nil {
+				if errors.Is(err, fs.ErrNotExist) {
+					_ = os.Remove(p)
+					return nil
+				}
 				return nil
 			}
-			return nil
 		}
 		if s.expired(info.ModTime(), now) {
 			_ = os.Remove(p)
-			_ = os.Remove(metaPath)
+			if s.StoreContentType {
+				_ = os.Remove(metaPath)
+			}
 			return nil
 		}
 		entries = append(entries, entry{path: p, metaPath: metaPath, size: info.Size(), modTime: info.ModTime()})
@@ -208,7 +232,9 @@ func (s *FileStore) evict() {
 			return
 		}
 		_ = os.Remove(e.path)
-		_ = os.Remove(e.metaPath)
+		if s.StoreContentType {
+			_ = os.Remove(e.metaPath)
+		}
 		total -= e.size
 	}
 }
