@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -20,8 +21,9 @@ import (
 // metadata in <hash>.meta. Keys are hashed (SHA-256) so they can contain any
 // characters and still be safe filenames.
 type FileStore struct {
-	Root             string
-	StoreContentType bool
+	Root string
+
+	storeContentType bool
 
 	// MaxBytes optionally bounds total cache size; when exceeded, the
 	// oldest payload files are evicted on the next Put based on mtime.
@@ -34,6 +36,8 @@ type FileStore struct {
 	mu sync.Mutex
 }
 
+const tempFilePrefix = ".tmp-"
+
 // NewFileStore constructs a FileStore. Root is created if it does not exist.
 func NewFileStore(root string, maxBytes int64) (*FileStore, error) {
 	abs, err := filepath.Abs(root)
@@ -43,7 +47,7 @@ func NewFileStore(root string, maxBytes int64) (*FileStore, error) {
 	if err := os.MkdirAll(abs, 0o750); err != nil {
 		return nil, fmt.Errorf("cache file mkdir: %w", err)
 	}
-	return &FileStore{Root: abs, StoreContentType: true, MaxBytes: maxBytes}, nil
+	return &FileStore{Root: abs, storeContentType: true, MaxBytes: maxBytes}, nil
 }
 
 // NewFileStoreWithMaxAge constructs a FileStore with size and age eviction.
@@ -64,7 +68,7 @@ func NewPayloadFileStoreWithMaxAge(root string, maxBytes int64, maxAge time.Dura
 	if err != nil {
 		return nil, err
 	}
-	store.StoreContentType = false
+	store.storeContentType = false
 	store.MaxAge = maxAge
 	return store, nil
 }
@@ -77,7 +81,7 @@ type fileMeta struct {
 func (s *FileStore) Get(_ context.Context, key string) (io.ReadCloser, Entry, error) {
 	dataPath, metaPath := s.paths(key)
 	contentType := ""
-	if s.StoreContentType {
+	if s.storeContentType {
 		mb, err := os.ReadFile(metaPath)
 		if err != nil {
 			if errors.Is(err, fs.ErrNotExist) {
@@ -107,7 +111,9 @@ func (s *FileStore) Get(_ context.Context, key string) (io.ReadCloser, Entry, er
 	if s.expired(storedAt, time.Now()) {
 		_ = f.Close()
 		_ = os.Remove(dataPath)
-		_ = os.Remove(metaPath)
+		if s.storeContentType {
+			_ = os.Remove(metaPath)
+		}
 		return nil, Entry{}, ErrMiss
 	}
 	return f, Entry{
@@ -142,9 +148,7 @@ func (s *FileStore) Put(_ context.Context, key, contentType string, value io.Rea
 		_ = os.Remove(tmpName)
 		return err
 	}
-	storedAt := time.Now()
-	_ = os.Chtimes(dataPath, storedAt, storedAt)
-	if s.StoreContentType {
+	if s.storeContentType {
 		meta := fileMeta{ContentType: contentType}
 		mb, _ := json.Marshal(meta)
 		if err := os.WriteFile(metaPath, mb, 0o640); err != nil {
@@ -161,7 +165,9 @@ func (s *FileStore) Put(_ context.Context, key, contentType string, value io.Rea
 func (s *FileStore) Delete(_ context.Context, key string) error {
 	dataPath, metaPath := s.paths(key)
 	_ = os.Remove(dataPath)
-	_ = os.Remove(metaPath)
+	if s.storeContentType {
+		_ = os.Remove(metaPath)
+	}
 	return nil
 }
 
@@ -179,10 +185,9 @@ func (s *FileStore) evict() {
 	defer s.mu.Unlock()
 	var total int64
 	type entry struct {
-		path     string
-		metaPath string
-		size     int64
-		modTime  time.Time
+		path    string
+		size    int64
+		modTime time.Time
 	}
 	var entries []entry
 	now := time.Now()
@@ -190,7 +195,7 @@ func (s *FileStore) evict() {
 		if err != nil || d.IsDir() {
 			return nil
 		}
-		if filepath.Ext(p) == ".meta" {
+		if filepath.Ext(p) == ".meta" || strings.HasPrefix(d.Name(), tempFilePrefix) {
 			return nil
 		}
 		info, err := d.Info()
@@ -198,7 +203,7 @@ func (s *FileStore) evict() {
 			return nil
 		}
 		metaPath := p + ".meta"
-		if s.StoreContentType {
+		if s.storeContentType {
 			if _, err := os.Stat(metaPath); err != nil {
 				if errors.Is(err, fs.ErrNotExist) {
 					_ = os.Remove(p)
@@ -209,12 +214,12 @@ func (s *FileStore) evict() {
 		}
 		if s.expired(info.ModTime(), now) {
 			_ = os.Remove(p)
-			if s.StoreContentType {
+			if s.storeContentType {
 				_ = os.Remove(metaPath)
 			}
 			return nil
 		}
-		entries = append(entries, entry{path: p, metaPath: metaPath, size: info.Size(), modTime: info.ModTime()})
+		entries = append(entries, entry{path: p, size: info.Size(), modTime: info.ModTime()})
 		total += info.Size()
 		return nil
 	})
@@ -232,8 +237,8 @@ func (s *FileStore) evict() {
 			return
 		}
 		_ = os.Remove(e.path)
-		if s.StoreContentType {
-			_ = os.Remove(e.metaPath)
+		if s.storeContentType {
+			_ = os.Remove(e.path + ".meta")
 		}
 		total -= e.size
 	}
