@@ -28,15 +28,16 @@ files under `cache.root`. It is different from
 `iiif.image.max_derivative_bytes`, which limits one generated response before it
 can be returned or cached. A cache write can temporarily exceed `cache.max_bytes`
 before eviction runs, and metadata sidecar files are not counted toward the
-target. When size eviction runs, Triplet removes the oldest-written derivative
-entries first; reads do not refresh cache age.
+target. When size eviction runs, Triplet removes the oldest derivative payload
+files first based on payload file modification time; reads do not refresh cache
+age.
 
-`cache.max_age` is based on when Triplet wrote the derivative entry, not when it
-was last requested. When a cached derivative is older than `max_age`, Triplet
-removes it and treats the request as a cache miss. Expired entries are also
-removed opportunistically when new entries are written. Set `max_age: 0` or omit
-it to keep derivative files until size eviction, manual deletion, invalidation,
-or cache-key changes make them unused.
+`cache.max_age` is based on the derivative payload file modification time, not
+when it was last requested. When a cached derivative is older than `max_age`,
+Triplet removes it and treats the request as a cache miss. Expired entries are
+also removed opportunistically when new entries are written. Set `max_age: 0`
+or omit it to keep derivative files until size eviction, manual deletion,
+invalidation, or cache-key changes make them unused.
 
 ### Derivative invalidation
 

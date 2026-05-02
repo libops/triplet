@@ -3,7 +3,6 @@ package cache
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -95,20 +94,18 @@ func TestFileStoreEvictsWhenOversize(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		_, _, errA := store.Get(context.Background(), "a")
-		_, _, errB := store.Get(context.Background(), "b")
-		if errors.Is(errA, ErrMiss) && errB == nil {
-			return
-		}
-		time.Sleep(20 * time.Millisecond)
+	if _, _, err := store.Get(context.Background(), "a"); !errors.Is(err, ErrMiss) {
+		t.Fatalf("a err = %v, want miss", err)
 	}
-	t.Fatal("expected oldest entry to be evicted")
+	if rc, _, err := store.Get(context.Background(), "b"); err != nil {
+		t.Fatalf("b err = %v", err)
+	} else {
+		_ = rc.Close()
+	}
 }
 
 func TestFileStoreGetDoesNotRefreshEvictionOrder(t *testing.T) {
-	store, err := NewFileStore(t.TempDir(), 5)
+	store, err := NewFileStore(t.TempDir(), 8)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,8 +144,8 @@ func TestFileStoreGetDoesNotRefreshEvictionOrder(t *testing.T) {
 	}
 }
 
-func TestFileStoreEvictsByStoredAt(t *testing.T) {
-	store, err := NewFileStore(t.TempDir(), 5)
+func TestFileStoreEvictsByModTime(t *testing.T) {
+	store, err := NewFileStore(t.TempDir(), 8)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,25 +157,14 @@ func TestFileStoreEvictsByStoredAt(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	dataPathA, metaPathA := store.paths("a")
+	dataPathA, _ := store.paths("a")
 	oldTime := time.Now().Add(-2 * time.Hour)
-	if err := os.Chtimes(dataPathA, time.Now(), time.Now()); err != nil {
+	if err := os.Chtimes(dataPathA, oldTime, oldTime); err != nil {
 		t.Fatal(err)
 	}
-	metaA := fileMeta{ContentType: "text/plain", Size: 4, StoredAt: oldTime}
-	mbA, _ := json.Marshal(metaA)
-	if err := os.WriteFile(metaPathA, mbA, 0o640); err != nil {
-		t.Fatal(err)
-	}
-
-	dataPathB, metaPathB := store.paths("b")
+	dataPathB, _ := store.paths("b")
 	newTime := time.Now().Add(-1 * time.Hour)
-	if err := os.Chtimes(dataPathB, oldTime, oldTime); err != nil {
-		t.Fatal(err)
-	}
-	metaB := fileMeta{ContentType: "text/plain", Size: 4, StoredAt: newTime}
-	mbB, _ := json.Marshal(metaB)
-	if err := os.WriteFile(metaPathB, mbB, 0o640); err != nil {
+	if err := os.Chtimes(dataPathB, newTime, newTime); err != nil {
 		t.Fatal(err)
 	}
 
@@ -237,12 +223,9 @@ func TestFileStoreMaxAgeEvictsOnPut(t *testing.T) {
 	if err := store.Put(context.Background(), "old", "text/plain", strings.NewReader("old")); err != nil {
 		t.Fatal(err)
 	}
-	dataPath, metaPath := store.paths("old")
+	dataPath, _ := store.paths("old")
 	oldTime := time.Now().Add(-2 * time.Hour)
-	_ = os.Chtimes(dataPath, oldTime, oldTime)
-	meta := fileMeta{ContentType: "text/plain", Size: 3, StoredAt: oldTime}
-	mb, _ := json.Marshal(meta)
-	if err := os.WriteFile(metaPath, mb, 0o640); err != nil {
+	if err := os.Chtimes(dataPath, oldTime, oldTime); err != nil {
 		t.Fatal(err)
 	}
 
