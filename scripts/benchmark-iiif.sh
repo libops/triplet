@@ -273,9 +273,9 @@ run_matrix() {
   if [ "$APPEND_RUN_REPORTS" = "1" ]; then
     append_matrix_reports "$index"
   fi
-  echo "Benchmark matrix complete: $OUT_DIR"
-  echo "Report: $index"
-  cat "$index"
+  if [ "$PRINT_REPORT" = "1" ]; then
+    python3 "$ROOT_DIR/scripts/extract-benchmark-tldr.py" "$index"
+  fi
 }
 
 concurrency_list_for_mode() {
@@ -332,6 +332,14 @@ def fmt_ms(value):
 
 def fmt_cpu_ms(value):
     return "-" if value is None else f"{value * 1000:.2f}"
+
+def fmt_s(value):
+    return "-" if value is None else f"{value:.2f}"
+
+def fmt_rate_per_s(count, duration):
+    if not count or not duration:
+        return "-"
+    return f"{count / duration:.1f}"
 
 def fmt_size(value):
     if value is None:
@@ -413,7 +421,8 @@ for run_json in sorted(out_root.glob(f"{run_id}-*/run.json")):
             run.get("mode", "-"),
             str(run.get("concurrency", "-")),
             fmt_rate(triplet["ok"], triplet["total"]),
-            fmt_ms(statistics.median(triplet_times) if triplet_times else None),
+            fmt_s(duration if duration > 0 else None),
+            fmt_rate_per_s(triplet["ok"], duration),
             fmt_ms(percentile(triplet_times, 0.95)),
             fmt_ms(percentile(triplet_times, 0.99)),
             fmt_cpu_ms(cpu_per_request),
@@ -449,8 +458,8 @@ if summary_rows:
         "",
         f"Triplet image: `{', '.join(sorted(triplet_images))}`",
         "",
-        "| Mode | Concurrency | Triplet OK | Median ms | p95 ms | p99 ms | CPU ms/req | Max MiB |",
-        "| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: |",
+        "| Mode | Concurrency | Triplet OK | Duration s | Req/s | p95 ms | p99 ms | CPU ms/req | Max MiB |",
+        "| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for item in sorted(summary_rows, key=sort_key):
         lines.append("| " + " | ".join(item["row"]) + " |")
@@ -650,14 +659,8 @@ PY
   python3 "$ROOT_DIR/scripts/benchmark-stats-summary.py" "$OUT_DIR/container-stats.jsonl" "$OUT_DIR/resource-summary.csv"
   python3 "$ROOT_DIR/scripts/benchmark-report.py" "$OUT_DIR/requests.csv" "$OUT_DIR/resource-summary.csv" "$OUT_DIR/run.json" "$OUT_DIR/report.md"
   if [ "$PRINT_REPORT" = "1" ]; then
-    cat "$OUT_DIR/report.md"
+    python3 "$ROOT_DIR/scripts/extract-benchmark-tldr.py" "$OUT_DIR/report.md"
   fi
-  echo "Benchmark complete: $OUT_DIR"
-  echo "Request timings: $OUT_DIR/requests.csv"
-  echo "Summary: $OUT_DIR/summary.csv"
-  echo "Resource summary: $OUT_DIR/resource-summary.csv"
-  echo "Report: $OUT_DIR/report.md"
-  echo "Container stats: $OUT_DIR/container-stats.jsonl"
 }
 
 main "$@"

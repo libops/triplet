@@ -6,7 +6,6 @@ import statistics
 import sys
 from collections import defaultdict
 
-
 UNITS = {
     "B": 1,
     "KiB": 1024,
