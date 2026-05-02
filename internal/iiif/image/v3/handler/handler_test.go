@@ -211,6 +211,43 @@ func TestImageRequestHasCanonicalLink(t *testing.T) {
 	}
 }
 
+func TestDerivativeCacheHitInfersContentTypeFromRequestFormat(t *testing.T) {
+	store, err := cache.NewPayloadFileStoreWithMaxAge(t.TempDir(), 0, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, _ := setupTestServerWithCache(t, store)
+	defer srv.Close()
+
+	imageURL := srv.URL + "/iiif/3/sample.png/full/max/0/default.png"
+	first, err := http.Get(imageURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.Body.Close()
+	if first.StatusCode != http.StatusOK {
+		t.Fatalf("first status = %d", first.StatusCode)
+	}
+	if got := first.Header.Get("Content-Type"); got != "image/png" {
+		t.Fatalf("first Content-Type = %q", got)
+	}
+
+	second, err := http.Get(imageURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Body.Close()
+	if second.StatusCode != http.StatusOK {
+		t.Fatalf("second status = %d", second.StatusCode)
+	}
+	if got := second.Header.Get("X-Cache"); got != "hit" {
+		t.Fatalf("second X-Cache = %q", got)
+	}
+	if got := second.Header.Get("Content-Type"); got != "image/png" {
+		t.Fatalf("second Content-Type = %q", got)
+	}
+}
+
 func TestUnsupportedSourceUsesClientError(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "bad.png"), []byte("not an image"), 0o600); err != nil {

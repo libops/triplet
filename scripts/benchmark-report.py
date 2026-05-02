@@ -172,6 +172,41 @@ def server_order(rows):
     return names
 
 
+def run_rows(
+    run,
+    image_count,
+    request_count,
+    measured_requests,
+    expected_per_server,
+    expected_total,
+):
+    rows = [
+        ["Started", run.get("started_at", "-")],
+        ["Mode", run.get("mode", "-")],
+        ["Images", str(image_count)],
+        ["Request types", str(request_count)],
+        ["Passes", str(run.get("passes", "-"))],
+        ["Warmup passes", str(run.get("warmup_passes", "-"))],
+        ["Concurrency", str(run.get("concurrency", "-"))],
+        ["Measured duration", format_duration(run.get("measured_duration_seconds"))],
+        ["Measured requests", str(measured_requests)],
+        ["Expected requests/server", str(expected_per_server)],
+        ["Expected requests total", str(expected_total)],
+        ["Stats interval", format_interval(run.get("stats_interval_seconds"))],
+        ["Triplet image", run.get("triplet_image", "-")],
+        ["Triplet cache", run.get("triplet_cache", "-")],
+        ["Triplet color management", run.get("triplet_color_management", "-")],
+        ["Triplet load access", run.get("triplet_load_access", "-")],
+        ["pprof", "enabled" if run.get("profile_enabled") else "disabled"],
+    ]
+    if run.get("cantaloupe_image"):
+        rows.insert(13, ["Cantaloupe image", run.get("cantaloupe_image", "-")])
+    if run.get("cantaloupe_cache"):
+        insert_at = 15 if run.get("cantaloupe_image") else 14
+        rows.insert(insert_at, ["Cantaloupe cache", run.get("cantaloupe_cache", "-")])
+    return [row for row in rows if row[1] is not None]
+
+
 def build_report(requests_csv, resource_csv, run_json):
     rows = read_requests(requests_csv)
     groups, failures = summarize_requests(rows)
@@ -194,30 +229,14 @@ def build_report(requests_csv, resource_csv, run_json):
         "",
         table(
             ["Metric", "Value"],
-            [
-                ["Started", run.get("started_at", "-")],
-                ["Mode", run.get("mode", "-")],
-                ["Images", str(len({row["image"] for row in rows}))],
-                ["Request types", str(len(requests))],
-                ["Passes", str(run.get("passes", "-"))],
-                ["Warmup passes", str(run.get("warmup_passes", "-"))],
-                ["Concurrency", str(run.get("concurrency", "-"))],
-                [
-                    "Measured duration",
-                    format_duration(run.get("measured_duration_seconds")),
-                ],
-                ["Measured requests", str(measured_requests)],
-                ["Expected requests/server", str(expected_per_server)],
-                ["Expected requests total", str(expected_total)],
-                ["Stats interval", format_interval(run.get("stats_interval_seconds"))],
-                ["Triplet image", run.get("triplet_image", "-")],
-                ["Cantaloupe image", run.get("cantaloupe_image", "-")],
-                ["Triplet cache", run.get("triplet_cache", "-")],
-                ["Cantaloupe cache", run.get("cantaloupe_cache", "-")],
-                ["Triplet color management", run.get("triplet_color_management", "-")],
-                ["Triplet load access", run.get("triplet_load_access", "-")],
-                ["pprof", "enabled" if run.get("profile_enabled") else "disabled"],
-            ],
+            run_rows(
+                run,
+                image_count,
+                len(requests),
+                measured_requests,
+                expected_per_server,
+                expected_total,
+            ),
         ),
         "",
         "## Request Comparison",

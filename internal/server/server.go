@@ -378,7 +378,7 @@ func buildDerivativeCache(cfg *config.Config) (cache.Store, error) {
 	if cfg.Cache.Root == "" {
 		return cache.Noop{}, nil
 	}
-	return cache.NewFileStoreWithMaxAge(cfg.Cache.Root, int64(cfg.Cache.MaxBytes), cfg.Cache.MaxAge)
+	return cache.NewPayloadFileStoreWithMaxAge(cfg.Cache.Root, int64(cfg.Cache.MaxBytes), cfg.Cache.MaxAge)
 }
 
 func buildSourceCache(cfg *config.Config) (cache.Store, error) {

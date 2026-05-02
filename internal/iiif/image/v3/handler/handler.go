@@ -198,6 +198,7 @@ func (h *Handler) serveImage(w http.ResponseWriter, r *http.Request, req parse.R
 	}
 	key, cacheable := derivativeKey(req, meta)
 	etag := ""
+	contentType := contentTypeForFormat(req.Format)
 	if cacheable {
 		if h.invalidationToken != "" {
 			if version := h.derivativeInvalidationVersion(r.Context(), req.Identifier); version != "" {
@@ -215,6 +216,8 @@ func (h *Handler) serveImage(w http.ResponseWriter, r *http.Request, req parse.R
 			defer rc.Close()
 			if entry.ContentType != "" {
 				w.Header().Set("Content-Type", entry.ContentType)
+			} else {
+				w.Header().Set("Content-Type", contentType)
 			}
 			if entry.Size > 0 {
 				w.Header().Set("Content-Length", fmt.Sprintf("%d", entry.Size))
@@ -232,7 +235,6 @@ func (h *Handler) serveImage(w http.ResponseWriter, r *http.Request, req parse.R
 		}
 	}
 
-	contentType := contentTypeForFormat(req.Format)
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("X-Cache", "miss")
 
