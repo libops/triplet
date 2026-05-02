@@ -17,9 +17,10 @@ import (
 	"time"
 )
 
-// FileStore stores cache entries as files under Root. Bytes go in <hash>,
-// metadata in <hash>.meta. Keys are hashed (SHA-256) so they can contain any
-// characters and still be safe filenames.
+// FileStore stores cache entries as files under Root. Bytes go in <hash>.
+// When storeContentType is enabled, metadata goes in <hash>.meta. Keys are
+// hashed (SHA-256) so they can contain any characters and still be safe
+// filenames.
 type FileStore struct {
 	Root string
 
@@ -144,16 +145,22 @@ func (s *FileStore) Put(_ context.Context, key, contentType string, value io.Rea
 		_ = os.Remove(tmpName)
 		return err
 	}
-	if err := os.Rename(tmpName, dataPath); err != nil {
-		_ = os.Remove(tmpName)
-		return err
-	}
 	if s.storeContentType {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if err := os.Rename(tmpName, dataPath); err != nil {
+			_ = os.Remove(tmpName)
+			return err
+		}
 		meta := fileMeta{ContentType: contentType}
 		mb, _ := json.Marshal(meta)
 		if err := os.WriteFile(metaPath, mb, 0o640); err != nil {
+			_ = os.Remove(dataPath)
 			return err
 		}
+	} else if err := os.Rename(tmpName, dataPath); err != nil {
+		_ = os.Remove(tmpName)
+		return err
 	}
 	if s.MaxAge > 0 || s.MaxBytes > 0 {
 		s.evict()
