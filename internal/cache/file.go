@@ -23,7 +23,7 @@ type FileStore struct {
 	Root string
 
 	// MaxBytes optionally bounds total cache size; when exceeded, the
-	// least-recently-modified entries are evicted on the next Put.
+	// oldest-written entries are evicted on the next Put.
 	MaxBytes int64
 
 	// MaxAge optionally bounds how long entries remain usable after Put.
@@ -87,9 +87,6 @@ func (s *FileStore) Get(_ context.Context, key string) (io.ReadCloser, Entry, er
 		}
 		return nil, Entry{}, err
 	}
-	// Refresh mtime so eviction LRU treats this as recently used.
-	now := time.Now()
-	_ = os.Chtimes(dataPath, now, now)
 	return f, Entry(m), nil
 }
 
@@ -157,7 +154,6 @@ func (s *FileStore) evict() {
 		path     string
 		metaPath string
 		size     int64
-		mod      time.Time
 		storedAt time.Time
 	}
 	var entries []entry
@@ -186,7 +182,7 @@ func (s *FileStore) evict() {
 			_ = os.Remove(metaPath)
 			return nil
 		}
-		entries = append(entries, entry{path: p, metaPath: metaPath, size: info.Size(), mod: info.ModTime(), storedAt: storedAt})
+		entries = append(entries, entry{path: p, metaPath: metaPath, size: info.Size(), storedAt: storedAt})
 		total += info.Size()
 		return nil
 	})
@@ -194,10 +190,10 @@ func (s *FileStore) evict() {
 		return
 	}
 	sort.Slice(entries, func(i, j int) bool {
-		if entries[i].mod.Equal(entries[j].mod) {
+		if entries[i].storedAt.Equal(entries[j].storedAt) {
 			return entries[i].path < entries[j].path
 		}
-		return entries[i].mod.Before(entries[j].mod)
+		return entries[i].storedAt.Before(entries[j].storedAt)
 	})
 	for _, e := range entries {
 		if total <= s.MaxBytes {

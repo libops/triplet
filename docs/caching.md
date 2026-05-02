@@ -28,7 +28,8 @@ files under `cache.root`. It is different from
 `iiif.image.max_derivative_bytes`, which limits one generated response before it
 can be returned or cached. A cache write can temporarily exceed `cache.max_bytes`
 before eviction runs, and metadata sidecar files are not counted toward the
-target.
+target. When size eviction runs, Triplet removes the oldest-written derivative
+entries first; reads do not refresh cache age.
 
 `cache.max_age` is based on when Triplet wrote the derivative entry, not when it
 was last requested. When a cached derivative is older than `max_age`, Triplet
@@ -50,6 +51,15 @@ route also clears those cached auth-probe decisions for the identifier.
 The invalidation route is protected by a bearer token and optional caller CIDR
 checks. See [Authorization](authorization.md#cache-invalidation-route) for the
 route configuration and caller requirements.
+
+```sh
+curl -X POST \
+  -H "Authorization: Bearer ${TRIPLET_IMAGE_CACHE_INVALIDATION_TOKEN}" \
+  "https://iiif.example.edu/iiif/3/https%3A%2F%2Frepo.example.edu%2Fsystem%2Ffiles%2Fimage.tif/cache/invalidate"
+```
+
+The identifier in the request path must be URI-encoded exactly as it appears in
+the IIIF Image API request path segment.
 
 ### Source version metadata
 

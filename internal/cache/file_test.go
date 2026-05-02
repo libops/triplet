@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -106,28 +107,126 @@ func TestFileStoreEvictsWhenOversize(t *testing.T) {
 	t.Fatal("expected oldest entry to be evicted")
 }
 
-func TestFileStoreMaxAgeExpiresOnGet(t *testing.T) {
-	store, err := NewFileStoreWithMaxAge(t.TempDir(), 0, time.Nanosecond)
+func TestFileStoreGetDoesNotRefreshEvictionOrder(t *testing.T) {
+	store, err := NewFileStore(t.TempDir(), 5)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Put(context.Background(), "old", "text/plain", strings.NewReader("payload")); err != nil {
+
+	if err := store.Put(context.Background(), "a", "text/plain", bytes.NewReader([]byte("1234"))); err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(time.Millisecond)
-
-	_, _, err = store.Get(context.Background(), "old")
-	if !errors.Is(err, ErrMiss) {
-		t.Fatalf("err = %v, want miss", err)
+	time.Sleep(20 * time.Millisecond)
+	if err := store.Put(context.Background(), "b", "text/plain", bytes.NewReader([]byte("5678"))); err != nil {
+		t.Fatal(err)
 	}
 
-	dataPath, metaPath := store.paths("old")
-	if _, err := os.Stat(dataPath); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("data stat err = %v, want not exist", err)
+	rc, _, err := store.Get(context.Background(), "a")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, err := os.Stat(metaPath); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("meta stat err = %v, want not exist", err)
+	_ = rc.Close()
+
+	time.Sleep(20 * time.Millisecond)
+	if err := store.Put(context.Background(), "c", "text/plain", bytes.NewReader([]byte("90"))); err != nil {
+		t.Fatal(err)
 	}
+
+	if _, _, err := store.Get(context.Background(), "a"); !errors.Is(err, ErrMiss) {
+		t.Fatalf("a err = %v, want miss", err)
+	}
+	if rc, _, err := store.Get(context.Background(), "b"); err != nil {
+		t.Fatalf("b err = %v", err)
+	} else {
+		_ = rc.Close()
+	}
+	if rc, _, err := store.Get(context.Background(), "c"); err != nil {
+		t.Fatalf("c err = %v", err)
+	} else {
+		_ = rc.Close()
+	}
+}
+
+func TestFileStoreEvictsByStoredAt(t *testing.T) {
+	store, err := NewFileStore(t.TempDir(), 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := store.Put(context.Background(), "a", "text/plain", bytes.NewReader([]byte("1234"))); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Put(context.Background(), "b", "text/plain", bytes.NewReader([]byte("5678"))); err != nil {
+		t.Fatal(err)
+	}
+
+	dataPathA, metaPathA := store.paths("a")
+	oldTime := time.Now().Add(-2 * time.Hour)
+	if err := os.Chtimes(dataPathA, time.Now(), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	metaA := fileMeta{ContentType: "text/plain", Size: 4, StoredAt: oldTime}
+	mbA, _ := json.Marshal(metaA)
+	if err := os.WriteFile(metaPathA, mbA, 0o640); err != nil {
+		t.Fatal(err)
+	}
+
+	dataPathB, metaPathB := store.paths("b")
+	newTime := time.Now().Add(-1 * time.Hour)
+	if err := os.Chtimes(dataPathB, oldTime, oldTime); err != nil {
+		t.Fatal(err)
+	}
+	metaB := fileMeta{ContentType: "text/plain", Size: 4, StoredAt: newTime}
+	mbB, _ := json.Marshal(metaB)
+	if err := os.WriteFile(metaPathB, mbB, 0o640); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := store.Put(context.Background(), "c", "text/plain", bytes.NewReader([]byte("90"))); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, err := store.Get(context.Background(), "a"); !errors.Is(err, ErrMiss) {
+		t.Fatalf("a err = %v, want miss", err)
+	}
+	if rc, _, err := store.Get(context.Background(), "b"); err != nil {
+		t.Fatalf("b err = %v", err)
+	} else {
+		_ = rc.Close()
+	}
+	if rc, _, err := store.Get(context.Background(), "c"); err != nil {
+		t.Fatalf("c err = %v", err)
+	} else {
+		_ = rc.Close()
+	}
+}
+
+func TestFileStoreMaxAgeExpiresOnGet(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		store, err := NewFileStoreWithMaxAge(t.TempDir(), 0, time.Nanosecond)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.Put(context.Background(), "old", "text/plain", strings.NewReader("payload")); err != nil {
+			t.Fatal(err)
+		}
+
+		time.Sleep(time.Millisecond)
+		synctest.Wait()
+
+		_, _, err = store.Get(context.Background(), "old")
+		if !errors.Is(err, ErrMiss) {
+			t.Fatalf("err = %v, want miss", err)
+		}
+
+		dataPath, metaPath := store.paths("old")
+		if _, err := os.Stat(dataPath); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("data stat err = %v, want not exist", err)
+		}
+		if _, err := os.Stat(metaPath); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("meta stat err = %v, want not exist", err)
+		}
+	})
 }
 
 func TestFileStoreMaxAgeEvictsOnPut(t *testing.T) {
