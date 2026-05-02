@@ -15,10 +15,8 @@ CONCURRENCY_LIST="${BENCH_CONCURRENCY_LIST:-}"
 UNCACHED_CONCURRENCY_LIST="${BENCH_UNCACHED_CONCURRENCY_LIST:-2 4 8}"
 CACHED_CONCURRENCY_LIST="${BENCH_CACHED_CONCURRENCY_LIST:-8 32 128}"
 TRIPLET_IMAGE="${BENCH_TRIPLET_IMAGE:-triplet-benchmark:dev}"
-CANTALOUPE_IMAGE="${BENCH_CANTALOUPE_IMAGE:-islandora/cantaloupe:main}"
 SKIP_BUILD="${BENCH_SKIP_BUILD:-0}"
 TRIPLET_PORT="${BENCH_TRIPLET_PORT:-18080}"
-CANTALOUPE_PORT="${BENCH_CANTALOUPE_PORT:-18182}"
 PASSES="${BENCH_PASSES:-5}"
 WARMUP_PASSES="${BENCH_WARMUP_PASSES:-1}"
 CONCURRENCY="${BENCH_CONCURRENCY:-1}"
@@ -35,7 +33,6 @@ APPEND_RUN_REPORTS="${BENCH_APPEND_RUN_REPORTS:-1}"
 
 NETWORK="triplet-bench-$RUN_ID"
 TRIPLET_CONTAINER="triplet-bench-triplet-$RUN_ID"
-CANTALOUPE_CONTAINER="triplet-bench-cantaloupe-$RUN_ID"
 
 mkdir -p "$OUT_DIR/request-lines" "$OUT_DIR/logs"
 
@@ -48,9 +45,8 @@ cleanup() {
     wait "$STATS_PID" >/dev/null 2>&1 || true
   fi
   docker logs "$TRIPLET_CONTAINER" >"$OUT_DIR/logs/triplet.log" 2>&1 || true
-  docker logs "$CANTALOUPE_CONTAINER" >"$OUT_DIR/logs/cantaloupe.log" 2>&1 || true
   if [ "$KEEP_CONTAINERS" != "1" ]; then
-    docker rm -f "$TRIPLET_CONTAINER" "$CANTALOUPE_CONTAINER" >/dev/null 2>&1 || true
+    docker rm -f "$TRIPLET_CONTAINER" >/dev/null 2>&1 || true
     docker network rm "$NETWORK" >/dev/null 2>&1 || true
   fi
 }
@@ -84,33 +80,6 @@ wait_http() {
     fi
     if [ "$SECONDS" -ge "$deadline" ]; then
       echo "$name did not become ready: $url" >&2
-      if [ -n "$container" ]; then
-        docker logs "$container" >&2 || true
-      fi
-      exit 1
-    fi
-    sleep 2
-  done
-}
-
-wait_any_http() {
-  local name="$1"
-  local url="$2"
-  local container="${3:-}"
-  local deadline=$((SECONDS + 120))
-  local code
-  while true; do
-    code="$(curl -sS -o /dev/null -w '%{http_code}' "$url" 2>/dev/null || true)"
-    if [ "$code" != "000" ] && [ -n "$code" ]; then
-      return
-    fi
-    if [ -n "$container" ] && [ "$(docker inspect "$container" --format '{{.State.Running}}' 2>/dev/null || true)" = "false" ]; then
-      echo "$name exited before it became reachable: $url" >&2
-      docker logs "$container" >&2 || true
-      exit 1
-    fi
-    if [ "$SECONDS" -ge "$deadline" ]; then
-      echo "$name did not become reachable: $url" >&2
       if [ -n "$container" ]; then
         docker logs "$container" >&2 || true
       fi
@@ -179,20 +148,12 @@ EOF
 
 collect_stats() {
   while true; do
-    for server in triplet cantaloupe; do
-      local container
-      if [ "$server" = "triplet" ]; then
-        container="$TRIPLET_CONTAINER"
-      else
-        container="$CANTALOUPE_CONTAINER"
-      fi
-      stats="$(docker stats --no-stream --format '{{json .}}' "$container" 2>/dev/null || true)"
-      if [ -n "$stats" ]; then
-        printf '{"ts":"%s","server":"%s","container":"%s","stats":%s}\n' \
-          "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$server" "$container" "$stats" \
-          >>"$OUT_DIR/container-stats.jsonl"
-      fi
-    done
+    stats="$(docker stats --no-stream --format '{{json .}}' "$TRIPLET_CONTAINER" 2>/dev/null || true)"
+    if [ -n "$stats" ]; then
+      printf '{"ts":"%s","server":"triplet","container":"%s","stats":%s}\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$TRIPLET_CONTAINER" "$stats" \
+        >>"$OUT_DIR/container-stats.jsonl"
+    fi
     sleep "$STATS_INTERVAL"
   done
 }
@@ -208,7 +169,6 @@ write_queue() {
           continue
         fi
         printf '%s\0%s\0%s\0%s\0%s\0%s\0' "triplet" "http://127.0.0.1:$TRIPLET_PORT" "$image" "$pass" "$request_name" "$request_path" >>"$queue"
-        printf '%s\0%s\0%s\0%s\0%s\0%s\0' "cantaloupe" "http://127.0.0.1:$CANTALOUPE_PORT" "$image" "$pass" "$request_name" "$request_path" >>"$queue"
       done <"$REQUESTS_FILE"
     done
   done
@@ -588,21 +548,15 @@ main() {
 
   write_triplet_config
 
-  mkdir -p "$OUT_DIR/triplet-cache" "$OUT_DIR/cantaloupe-cache"
+  mkdir -p "$OUT_DIR/triplet-cache"
   triplet_cache_desc="derivative=false, source=false, vips_operation=false"
-  cantaloupe_derivative_enabled=false
-  cantaloupe_derivative=
-  cantaloupe_cache_desc="client=true, derivative=false, info=true, source=FilesystemCache, worker=false"
   if [ "$MODE" = "cached" ]; then
-    mkdir -p "$OUT_DIR/triplet-cache" "$OUT_DIR/cantaloupe-cache"
+    mkdir -p "$OUT_DIR/triplet-cache"
     triplet_cache_desc="derivative=true, root=/cache/triplet, source=false, vips_operation=false"
-    cantaloupe_derivative_enabled=true
-    cantaloupe_derivative=FilesystemCache
-    cantaloupe_cache_desc="client=true, derivative=true, info=true, source=FilesystemCache, worker=false"
   fi
 
   cat >"$OUT_DIR/run.json" <<EOF
-{"run_id":"$RUN_ID","mode":"$MODE","image_dir":"$IMAGE_DIR","requests_file":"$REQUESTS_FILE","passes":$PASSES,"warmup_passes":$WARMUP_PASSES,"concurrency":$CONCURRENCY,"stats_interval_seconds":$STATS_INTERVAL,"profile_enabled":$PROFILE,"profile_seconds":$PROFILE_SECONDS,"triplet_image":"$TRIPLET_IMAGE","cantaloupe_image":"$CANTALOUPE_IMAGE","triplet_cache":"$triplet_cache_desc","cantaloupe_cache":"$cantaloupe_cache_desc","triplet_color_management":"$TRIPLET_COLOR_MANAGEMENT","triplet_load_access":"$TRIPLET_LOAD_ACCESS","started_at":"$(date -u +%Y-%m-%dT%H:%M:%SZ)"}
+{"run_id":"$RUN_ID","mode":"$MODE","image_dir":"$IMAGE_DIR","requests_file":"$REQUESTS_FILE","passes":$PASSES,"warmup_passes":$WARMUP_PASSES,"concurrency":$CONCURRENCY,"stats_interval_seconds":$STATS_INTERVAL,"profile_enabled":$PROFILE,"profile_seconds":$PROFILE_SECONDS,"triplet_image":"$TRIPLET_IMAGE","triplet_cache":"$triplet_cache_desc","triplet_color_management":"$TRIPLET_COLOR_MANAGEMENT","triplet_load_access":"$TRIPLET_LOAD_ACCESS","started_at":"$(date -u +%Y-%m-%dT%H:%M:%SZ)"}
 EOF
 
   if [ "$SKIP_BUILD" = "1" ]; then
@@ -621,41 +575,7 @@ EOF
     -v "$OUT_DIR/triplet.yaml:/etc/triplet/config.yaml:ro" \
     "$TRIPLET_IMAGE" -config /etc/triplet/config.yaml >/dev/null
 
-  docker run -d --name "$CANTALOUPE_CONTAINER" --network "$NETWORK" \
-    -p "127.0.0.1:$CANTALOUPE_PORT:8182" \
-    -v "$IMAGE_DIR:/images:ro" \
-    -v "$OUT_DIR/cantaloupe-cache:/cache/cantaloupe" \
-    -e CANTALOUPE_FILESYSTEMSOURCE_BASICLOOKUPSTRATEGY_PATH_PREFIX=/images/ \
-    -e CANTALOUPE_SOURCE_STATIC=FilesystemSource \
-    -e CANTALOUPE_CACHE_CLIENT_ENABLED=true \
-    -e CANTALOUPE_CACHE_CLIENT_MAX_AGE=2592000 \
-    -e CANTALOUPE_CACHE_CLIENT_MUST_REVALIDATE=false \
-    -e CANTALOUPE_CACHE_CLIENT_NO_CACHE=false \
-    -e CANTALOUPE_CACHE_CLIENT_NO_STORE=false \
-    -e CANTALOUPE_CACHE_CLIENT_NO_TRANSFORM=true \
-    -e CANTALOUPE_CACHE_CLIENT_PRIVATE=false \
-    -e CANTALOUPE_CACHE_CLIENT_PROXY_REVALIDATE=false \
-    -e CANTALOUPE_CACHE_CLIENT_PUBLIC=true \
-    -e CANTALOUPE_CACHE_CLIENT_SHARED_MAX_AGE= \
-    -e CANTALOUPE_CACHE_SERVER_DERIVATIVE_ENABLED="$cantaloupe_derivative_enabled" \
-    -e CANTALOUPE_CACHE_SERVER_DERIVATIVE_TTL_SECONDS=2592000 \
-    -e CANTALOUPE_CACHE_SERVER_DERIVATIVE="$cantaloupe_derivative" \
-    -e CANTALOUPE_CACHE_SERVER_INFO_ENABLED=true \
-    -e CANTALOUPE_CACHE_SERVER_PURGE_MISSING=false \
-    -e CANTALOUPE_CACHE_SERVER_RESOLVE_FIRST=false \
-    -e CANTALOUPE_CACHE_SERVER_SOURCE_TTL_SECONDS=2592000 \
-    -e CANTALOUPE_CACHE_SERVER_SOURCE=FilesystemCache \
-    -e CANTALOUPE_CACHE_SERVER_WORKER_ENABLED=false \
-    -e CANTALOUPE_CACHE_SERVER_WORKER_INTERVAL=86400 \
-    "$CANTALOUPE_IMAGE" >/dev/null
-
   wait_http triplet "http://127.0.0.1:$TRIPLET_PORT/healthz" "$TRIPLET_CONTAINER"
-  wait_any_http cantaloupe "http://127.0.0.1:$CANTALOUPE_PORT/" "$CANTALOUPE_CONTAINER"
-
-  first_encoded="$(urlencode "${images[0]}")"
-  if ! curl -fsS -o /dev/null "http://127.0.0.1:$CANTALOUPE_PORT/iiif/3/$first_encoded/info.json"; then
-    echo "warning: Cantaloupe did not return info.json for ${images[0]}; benchmark will record per-request failures" >&2
-  fi
 
   export OUT_DIR CURL_TIMEOUT
   write_worker

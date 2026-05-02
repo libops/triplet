@@ -20,7 +20,7 @@ import (
 // metadata in <hash>.meta. Keys are hashed (SHA-256) so they can contain any
 // characters and still be safe filenames.
 type FileStore struct {
-	Root string
+	Root             string
 	StoreContentType bool
 
 	// MaxBytes optionally bounds total cache size; when exceeded, the
