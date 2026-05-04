@@ -21,13 +21,6 @@ curl http://localhost:8080/iiif/3/sample.png/info.json
 
 The project documentation lives at <https://libops.github.io/triplet>.
 
-## Development
-
-```bash
-make build
-make test
-```
-
 ## License
 
 MIT. See [LICENSE](LICENSE).
