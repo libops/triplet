@@ -146,10 +146,37 @@ func TestFileStoreEvictSkipsInFlightTempFiles(t *testing.T) {
 	if err := store.Put(context.Background(), "b", "text/plain", strings.NewReader("b")); err != nil {
 		t.Fatal(err)
 	}
+	store.waitForEviction()
 
 	if _, err := os.Stat(tmpPath); err != nil {
 		t.Fatalf("tmp stat err = %v, want exists", err)
 	}
+}
+
+func TestPayloadFileStorePutDoesNotWaitForEviction(t *testing.T) {
+	store, err := NewPayloadFileStoreWithMaxAge(t.TempDir(), 1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	store.mu.Lock()
+	done := make(chan error, 1)
+	go func() {
+		done <- store.Put(context.Background(), "a", "text/plain", strings.NewReader("payload"))
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		store.mu.Unlock()
+		t.Fatal("Put waited for eviction")
+	}
+
+	store.mu.Unlock()
+	store.waitForEviction()
 }
 
 func TestFileStoreConcurrentPutsWithEviction(t *testing.T) {
@@ -182,6 +209,7 @@ func TestFileStoreConcurrentPutsWithEviction(t *testing.T) {
 
 	wg.Wait()
 	close(errCh)
+	store.waitForEviction()
 
 	for err := range errCh {
 		t.Fatal(err)
@@ -201,6 +229,7 @@ func TestFileStoreEvictsWhenOversize(t *testing.T) {
 	if err := store.Put(context.Background(), "b", "text/plain", bytes.NewReader([]byte("5678"))); err != nil {
 		t.Fatal(err)
 	}
+	store.waitForEviction()
 
 	if _, _, err := store.Get(context.Background(), "a"); !errors.Is(err, ErrMiss) {
 		t.Fatalf("a err = %v, want miss", err)
@@ -236,6 +265,7 @@ func TestFileStoreGetDoesNotRefreshEvictionOrder(t *testing.T) {
 	if err := store.Put(context.Background(), "c", "text/plain", bytes.NewReader([]byte("90"))); err != nil {
 		t.Fatal(err)
 	}
+	store.waitForEviction()
 
 	if _, _, err := store.Get(context.Background(), "a"); !errors.Is(err, ErrMiss) {
 		t.Fatalf("a err = %v, want miss", err)
@@ -279,6 +309,7 @@ func TestFileStoreEvictsByModTime(t *testing.T) {
 	if err := store.Put(context.Background(), "c", "text/plain", bytes.NewReader([]byte("90"))); err != nil {
 		t.Fatal(err)
 	}
+	store.waitForEviction()
 
 	if _, _, err := store.Get(context.Background(), "a"); !errors.Is(err, ErrMiss) {
 		t.Fatalf("a err = %v, want miss", err)
@@ -340,6 +371,7 @@ func TestFileStoreMaxAgeEvictsOnPut(t *testing.T) {
 	if err := store.Put(context.Background(), "new", "text/plain", strings.NewReader("new")); err != nil {
 		t.Fatal(err)
 	}
+	store.waitForEviction()
 	if _, _, err := store.Get(context.Background(), "old"); !errors.Is(err, ErrMiss) {
 		t.Fatalf("old err = %v, want miss", err)
 	}

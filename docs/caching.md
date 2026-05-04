@@ -20,16 +20,17 @@ cache:
 ```
 
 `max_bytes` is a best-effort filesystem eviction target. `max_age` is an
-optional age limit for derivative entries. Failed transforms and HTTP error
-responses are not stored.
+optional age limit for derivative entries. Eviction after writes runs in the
+background, so a cache miss response is not delayed by walking a large cache
+tree. Failed transforms and HTTP error responses are not stored.
 
 `cache.max_bytes` is the approximate total retained size of derivative payload
 files under `cache.root`. It is different from
 `iiif.image.max_derivative_bytes`, which limits one generated response before it
-can be returned or cached. A cache write can temporarily exceed `cache.max_bytes`
-before eviction runs. When size eviction runs, Triplet removes the oldest
-derivative payload files first based on payload file modification time; reads
-do not refresh cache age.
+can be returned or cached. A cache write can temporarily exceed
+`cache.max_bytes` before asynchronous eviction catches up. When size eviction
+runs, Triplet removes the oldest derivative payload files first based on payload
+file modification time; reads do not refresh cache age.
 
 `cache.max_age` is based on the derivative payload file modification time, not
 when it was last requested. When a cached derivative is older than `max_age`,

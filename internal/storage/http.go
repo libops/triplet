@@ -11,6 +11,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -33,6 +34,10 @@ type HTTPOpener struct {
 	// ForwardAuthHeaders forwards Cookie and Authorization headers from the
 	// request context. Only enable this for trusted, per-request fallbacks.
 	ForwardAuthHeaders bool
+
+	transportMu                sync.Mutex
+	sharedTransport            http.RoundTripper
+	sharedTransportPrivateMode bool
 }
 
 const DefaultRequestTimeout = 2 * time.Minute
@@ -258,15 +263,26 @@ func (h *HTTPOpener) client() *http.Client {
 		return &http.Client{
 			Timeout:       30 * time.Second,
 			CheckRedirect: h.checkRedirect,
-			Transport:     h.transport(),
+			Transport:     h.defaultTransport(),
 		}
 	}
 	c := *h.Client
 	c.CheckRedirect = h.checkRedirect
 	if c.Transport == nil {
-		c.Transport = h.transport()
+		c.Transport = h.defaultTransport()
 	}
 	return &c
+}
+
+func (h *HTTPOpener) defaultTransport() http.RoundTripper {
+	h.transportMu.Lock()
+	defer h.transportMu.Unlock()
+	if h.sharedTransport != nil && h.sharedTransportPrivateMode == h.AllowPrivateHosts {
+		return h.sharedTransport
+	}
+	h.sharedTransport = h.transport()
+	h.sharedTransportPrivateMode = h.AllowPrivateHosts
+	return h.sharedTransport
 }
 
 func (h *HTTPOpener) transport() http.RoundTripper {

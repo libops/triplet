@@ -27,14 +27,18 @@ type FileStore struct {
 	storeContentType bool
 
 	// MaxBytes optionally bounds total cache size; when exceeded, the
-	// oldest payload files are evicted on the next Put based on mtime.
+	// oldest payload files are evicted asynchronously after Put based on mtime.
 	MaxBytes int64
 
 	// MaxAge optionally bounds how long entries remain usable after Put.
 	// Expired entries are removed on Get and opportunistically on Put.
 	MaxAge time.Duration
 
-	mu sync.Mutex
+	mu         sync.Mutex
+	evictMu    sync.Mutex
+	evicting   bool
+	evictAgain bool
+	evictDone  chan struct{}
 }
 
 const tempFilePrefix = ".tmp-"
@@ -154,7 +158,7 @@ func (s *FileStore) Put(_ context.Context, key, contentType string, value io.Rea
 		return err
 	}
 	if s.MaxAge > 0 || s.MaxBytes > 0 {
-		s.evict()
+		s.scheduleEvict()
 	}
 	return nil
 }
@@ -169,7 +173,7 @@ func (s *FileStore) installWithMeta(tmpName, dataPath, metaPath, contentType str
 	}
 	meta := fileMeta{ContentType: contentType}
 	mb, _ := json.Marshal(meta)
-	if err := os.WriteFile(metaPath, mb, 0o640); err != nil {
+	if err := os.WriteFile(metaPath, mb, 0o600); err != nil {
 		_ = os.Remove(dataPath)
 		return err
 	}
@@ -193,6 +197,50 @@ func (s *FileStore) paths(key string) (data, meta string) {
 	dir := filepath.Join(s.Root, hex[:2], hex[2:4])
 	base := filepath.Join(dir, hex)
 	return base, base + ".meta"
+}
+
+func (s *FileStore) scheduleEvict() {
+	s.evictMu.Lock()
+	if s.evicting {
+		s.evictAgain = true
+		s.evictMu.Unlock()
+		return
+	}
+	s.evicting = true
+	s.evictAgain = false
+	s.evictDone = make(chan struct{})
+	s.evictMu.Unlock()
+
+	go s.runEvict()
+}
+
+func (s *FileStore) runEvict() {
+	for {
+		s.evict()
+
+		s.evictMu.Lock()
+		if !s.evictAgain {
+			s.evicting = false
+			close(s.evictDone)
+			s.evictMu.Unlock()
+			return
+		}
+		s.evictAgain = false
+		s.evictMu.Unlock()
+	}
+}
+
+func (s *FileStore) waitForEviction() {
+	for {
+		s.evictMu.Lock()
+		if !s.evicting {
+			s.evictMu.Unlock()
+			return
+		}
+		done := s.evictDone
+		s.evictMu.Unlock()
+		<-done
+	}
 }
 
 func (s *FileStore) evict() {
