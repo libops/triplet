@@ -3,11 +3,13 @@ package storage
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -168,6 +170,162 @@ func TestLocalURLFallbackUsesAuthenticatedHTTPFallbackForProtectedMiss(t *testin
 	}
 	if gotCookie != "SESS=abc" {
 		t.Fatalf("cookie = %q", gotCookie)
+	}
+}
+
+func TestLocalURLFallbackCoalescesAuthenticatedHTTPMetadataFallback(t *testing.T) {
+	root := t.TempDir()
+	var heads atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodHead {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		if r.Header.Get("Cookie") != "SESS=abc" {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		heads.Add(1)
+		time.Sleep(50 * time.Millisecond)
+		w.Header().Set("Content-Length", "6")
+	}))
+	defer srv.Close()
+	fileOp, err := NewFileOpener(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authHTTP := NewHTTPOpener([]string{srv.URL}, 0, 0)
+	authHTTP.AllowPrivateHosts = true
+	authHTTP.ForwardAuthHeaders = true
+	op := &LocalURLFallback{
+		Mappings: []LocalURLMapping{{
+			Prefix:    srv.URL + "/system/files",
+			File:      fileOp,
+			AuthProbe: true,
+		}},
+		Fallback:     errOpener{},
+		AuthFallback: authHTTP,
+	}
+	ctx := ContextWithAuthHeaders(context.Background(), http.Header{
+		"Cookie": []string{"SESS=abc"},
+	})
+
+	const callers = 8
+	start := make(chan struct{})
+	errCh := make(chan error, callers)
+	var wg sync.WaitGroup
+	for range callers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			meta, err := op.Meta(ctx, srv.URL+"/system/files/missing.jp2")
+			if err != nil {
+				errCh <- err
+				return
+			}
+			if meta.Size != 6 {
+				errCh <- fmt.Errorf("size = %d, want 6", meta.Size)
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		t.Fatal(err)
+	}
+	if got := heads.Load(); got != 1 {
+		t.Fatalf("HEAD requests = %d, want 1", got)
+	}
+}
+
+func TestLocalURLFallbackCoalescesAuthenticatedHTTPOpenFallback(t *testing.T) {
+	root := t.TempDir()
+	body := []byte("remote-payload")
+	var rangeGets atomic.Int32
+	var fullGets atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		if r.Header.Get("Cookie") != "SESS=abc" {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		w.Header().Set("Content-Type", "image/jp2")
+		w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+		if r.Header.Get("Range") != "" {
+			rangeGets.Add(1)
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(body)
+			return
+		}
+		fullGets.Add(1)
+		time.Sleep(50 * time.Millisecond)
+		_, _ = w.Write(body)
+	}))
+	defer srv.Close()
+	fileOp, err := NewFileOpener(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authHTTP := NewHTTPOpener([]string{srv.URL}, 0, 0)
+	authHTTP.AllowPrivateHosts = true
+	authHTTP.ForwardAuthHeaders = true
+	op := &LocalURLFallback{
+		Mappings: []LocalURLMapping{{
+			Prefix:    srv.URL + "/system/files",
+			File:      fileOp,
+			AuthProbe: true,
+		}},
+		Fallback:     errOpener{},
+		AuthFallback: authHTTP,
+	}
+	ctx := ContextWithAuthHeaders(context.Background(), http.Header{
+		"Cookie": []string{"SESS=abc"},
+	})
+
+	const callers = 8
+	start := make(chan struct{})
+	errCh := make(chan error, callers)
+	var wg sync.WaitGroup
+	for range callers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			rc, meta, err := op.Open(ctx, srv.URL+"/system/files/missing.jp2")
+			if err != nil {
+				errCh <- err
+				return
+			}
+			defer rc.Close()
+			got, err := io.ReadAll(rc)
+			if err != nil {
+				errCh <- err
+				return
+			}
+			if string(got) != string(body) {
+				errCh <- fmt.Errorf("body = %q, want %q", string(got), string(body))
+			}
+			if meta.Size != int64(len(body)) {
+				errCh <- fmt.Errorf("size = %d, want %d", meta.Size, len(body))
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		t.Fatal(err)
+	}
+	if got := rangeGets.Load(); got != 1 {
+		t.Fatalf("range probes = %d, want 1", got)
+	}
+	if got := fullGets.Load(); got != 1 {
+		t.Fatalf("full GET requests = %d, want 1", got)
 	}
 }
 

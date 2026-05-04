@@ -125,6 +125,28 @@ func TestHTTPOpenerAppliesDefaultRequestTimeout(t *testing.T) {
 	}
 }
 
+func TestHTTPOpenerReusesDefaultTransport(t *testing.T) {
+	op := NewHTTPOpener([]string{"https://example.org"}, 5*time.Second, 0)
+
+	first := op.client()
+	second := op.client()
+	if first.Transport == nil {
+		t.Fatal("missing first transport")
+	}
+	if first.Transport != second.Transport {
+		t.Fatal("default transport was not reused")
+	}
+
+	op.AllowPrivateHosts = true
+	third := op.client()
+	if third.Transport == first.Transport {
+		t.Fatal("transport was not rebuilt after private-host mode changed")
+	}
+	if third.Transport != op.client().Transport {
+		t.Fatal("rebuilt transport was not reused")
+	}
+}
+
 func TestHTTPOpenerRejectsRedirectToDeniedHost(t *testing.T) {
 	redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "http://example.org/secret", http.StatusFound)

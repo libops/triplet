@@ -36,6 +36,10 @@ var ErrBadRequest = errors.New("pipeline: bad request")
 // Triplet's supported input image formats.
 var ErrUnsupportedSource = errors.New("pipeline: unsupported source image")
 
+// ErrBusy marks requests whose context ended before a libvips worker was
+// available.
+var ErrBusy = errors.New("pipeline: server busy")
+
 // Limits caps resource use per request.
 type Limits struct {
 	// MaxOutputPixels rejects requests whose computed output exceeds this
@@ -58,6 +62,7 @@ type Pipeline struct {
 	src     storage.Opener
 	limits  Limits
 	options Options
+	limiter *tvips.Limiter
 }
 
 // Options controls optional performance/correctness tradeoffs.
@@ -86,6 +91,11 @@ func New(src storage.Opener, limits Limits, opts ...Options) *Pipeline {
 	return &Pipeline{src: src, limits: limits, options: options}
 }
 
+// SetLimiter sets the shared libvips concurrency limiter used by Transform.
+func (p *Pipeline) SetLimiter(limiter *tvips.Limiter) {
+	p.limiter = limiter
+}
+
 // Result describes a successfully encoded derivative.
 type Result struct {
 	ContentType string
@@ -110,6 +120,12 @@ func (p *Pipeline) Transform(ctx context.Context, req parse.Request, w io.Writer
 		return Result{}, err
 	}
 	defer source.Close()
+
+	release, err := p.limiter.Acquire(ctx)
+	if err != nil {
+		return Result{}, fmt.Errorf("%w: acquire vips worker: %w", ErrBusy, err)
+	}
+	defer release()
 
 	params := gv.NewImportParams()
 	params.Access.Set(p.loadAccess(req))

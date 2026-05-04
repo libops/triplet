@@ -185,18 +185,19 @@ cache:
   root: /var/lib/triplet/cache
   # Best-effort aggregate size target for all cached derivative payload files
   # under cache.root. This controls retained cache footprint over time, not the
-  # size of any single generated response. A write may temporarily exceed this
-  # target before eviction runs, and metadata sidecar files are not counted.
-  # 0 disables size-based eviction.
+  # size of any single generated response. The server does not prune for size
+  # in the request path; run triplet-cache-cleanup periodically to report when
+  # this target is exceeded. Metadata sidecar files are not counted. 0 disables
+  # size reporting.
   max_bytes: 500GiB
-  # Optional age limit for derivative entries. Expired entries are removed on
-  # read and opportunistically during writes. 0 disables age-based eviction.
+  # Optional age limit for derivative entries. Expired entries miss on read and
+  # are removed by triplet-cache-cleanup. 0 disables age-based cleanup.
   max_age: 720h
   # Optional filesystem source cache for fetched source bytes (primarily HTTP
   # identifiers).
   # source_root: /var/lib/triplet/source-cache
-  # Best-effort eviction target for the source cache. 0 disables size-based
-  # eviction.
+  # Best-effort reporting target for the source cache. The cleanup command
+  # reports when this target is exceeded. 0 disables size reporting.
   source_max_bytes: 1GiB
   # When non-zero, stale source-cache hits are served immediately while a
   # background refresh fetches a fresh copy for later requests.

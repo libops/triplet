@@ -140,7 +140,8 @@ COPY . .
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=1 go build -trimpath -ldflags='-s -w' -o /out/triplet ./cmd/triplet \
-  && CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /out/triplet-healthcheck ./cmd/triplet-healthcheck
+  && CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /out/triplet-healthcheck ./cmd/triplet-healthcheck \
+  && CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /out/triplet-cache-cleanup ./cmd/triplet-cache-cleanup
 
 FROM base AS test-runner
 WORKDIR /app
@@ -223,6 +224,7 @@ COPY --chown=triplet:triplet deploy/compose/images/ /var/lib/triplet/testdata/im
 
 COPY --from=build /out/triplet /usr/local/bin/triplet
 COPY --from=build /out/triplet-healthcheck /usr/local/bin/triplet-healthcheck
+COPY --from=build /out/triplet-cache-cleanup /usr/local/bin/triplet-cache-cleanup
 COPY config.example.yaml /etc/triplet/config.yaml
 RUN ldd /usr/local/bin/triplet >/dev/null
 

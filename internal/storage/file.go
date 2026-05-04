@@ -46,7 +46,7 @@ func (f *FileOpener) Open(_ context.Context, identifier string) (io.ReadSeekClos
 	if err != nil {
 		return nil, Meta{}, err
 	}
-	file, err := os.Open(realPath)
+	file, err := os.Open(realPath) // #nosec G304 -- realPath is resolved and checked under the configured source root.
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil, Meta{}, fmt.Errorf("%w: %s", ErrNotFound, identifier)

@@ -19,24 +19,35 @@ cache:
   max_age: 720h
 ```
 
-`max_bytes` is a best-effort filesystem eviction target. `max_age` is an
-optional age limit for derivative entries. Failed transforms and HTTP error
-responses are not stored.
+`max_bytes` is a best-effort filesystem size target. `max_age` is an optional
+age limit for derivative entries. Failed transforms and HTTP error responses
+are not stored.
 
 `cache.max_bytes` is the approximate total retained size of derivative payload
 files under `cache.root`. It is different from
 `iiif.image.max_derivative_bytes`, which limits one generated response before it
-can be returned or cached. A cache write can temporarily exceed `cache.max_bytes`
-before eviction runs. When size eviction runs, Triplet removes the oldest
-derivative payload files first based on payload file modification time; reads
-do not refresh cache age.
+can be returned or cached. Cache writes do not walk or prune the cache tree in
+the server request path.
 
 `cache.max_age` is based on the derivative payload file modification time, not
 when it was last requested. When a cached derivative is older than `max_age`,
-Triplet removes it and treats the request as a cache miss. Expired entries are
-also removed opportunistically when new entries are written. Set `max_age: 0`
-or omit it to keep derivative files until size eviction, manual deletion,
-invalidation, or cache-key changes make them unused.
+Triplet treats the request as a cache miss. Set `max_age: 0` or omit it to keep
+derivative files until manual deletion, invalidation, or cache-key changes make
+them unused.
+
+Run `triplet-cache-cleanup` periodically from cron, systemd timers, Kubernetes
+CronJobs, or a similar scheduler:
+
+```sh
+triplet-cache-cleanup -config /etc/triplet/config.yaml
+```
+
+The cleanup command reads the same YAML configuration as the server. It removes
+derivative cache entries older than `cache.max_age`, then measures the remaining
+derivative cache size. It also measures the source cache when `cache.source_root`
+is configured. If a cache remains above `cache.max_bytes` or
+`cache.source_max_bytes`, the command reports that condition and exits non-zero;
+it does not delete live entries solely to satisfy a size target.
 
 ### Derivative invalidation
 
@@ -153,7 +164,7 @@ derivative and source caches.
 
 | Layer | Configuration | What is cached | Invalidation / freshness |
 |---|---|---|---|
-| Derivative cache | `cache.root`; optional `cache.max_bytes`, `cache.max_age`, `iiif.image.cache_invalidation_token` | Encoded IIIF image responses, keyed by identifier, source version, invalidation marker, region, size, rotation, quality, and format. | A changed source version produces a new key. The protected invalidation route bumps the per-identifier invalidation marker. `cache.max_bytes` is a best-effort aggregate cache budget; `cache.max_age` removes derivative entries older than the configured duration. `iiif.image.max_derivative_bytes` is the per-response size limit before return/cache. Failed transforms and HTTP error responses are not stored. |
+| Derivative cache | `cache.root`; optional `cache.max_bytes`, `cache.max_age`, `iiif.image.cache_invalidation_token` | Encoded IIIF image responses, keyed by identifier, source version, invalidation marker, region, size, rotation, quality, and format. | A changed source version produces a new key. The protected invalidation route bumps the per-identifier invalidation marker. `cache.max_bytes` is a best-effort aggregate cache budget reported by `triplet-cache-cleanup`; `cache.max_age` is enforced on reads and by `triplet-cache-cleanup`. `iiif.image.max_derivative_bytes` is the per-response size limit before return/cache. Failed transforms and HTTP error responses are not stored. |
 | HTTP source cache | `cache.source_root`; optional `cache.source_max_bytes`, `cache.source_stale_after` | Original source bytes fetched through the HTTP source backend. | Keys are source identifiers. When `source_stale_after` is set, stale hits are served immediately and refreshed in the background. Upstream 4xx/5xx responses are not stored. |
 | HTTP metadata cache | `sources.http.metadata_cache_ttl` | Successful remote source metadata lookups for URL identifiers. | In-memory only. While fresh, derivative cache checks can avoid upstream metadata requests. This can serve stale derivatives until the TTL expires. |
 | `info.json` dimension cache | `iiif.image.info_dimension_cache` | Source dimensions used to build Image API `info.json`. | In-memory only. Entries are keyed by identifier plus source size/modtime metadata, so source changes with updated metadata miss the cache. |

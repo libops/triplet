@@ -11,7 +11,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -26,12 +25,12 @@ type FileStore struct {
 
 	storeContentType bool
 
-	// MaxBytes optionally bounds total cache size; when exceeded, the
-	// oldest payload files are evicted on the next Put based on mtime.
+	// MaxBytes optionally reports when total cache size exceeds this value
+	// during explicit cleanup. It does not trigger request-path eviction.
 	MaxBytes int64
 
 	// MaxAge optionally bounds how long entries remain usable after Put.
-	// Expired entries are removed on Get and opportunistically on Put.
+	// Expired entries miss on Get and are removed during explicit cleanup.
 	MaxAge time.Duration
 
 	mu sync.Mutex
@@ -51,7 +50,7 @@ func NewFileStore(root string, maxBytes int64) (*FileStore, error) {
 	return &FileStore{Root: abs, storeContentType: true, MaxBytes: maxBytes}, nil
 }
 
-// NewFileStoreWithMaxAge constructs a FileStore with size and age eviction.
+// NewFileStoreWithMaxAge constructs a FileStore with cleanup settings.
 func NewFileStoreWithMaxAge(root string, maxBytes int64, maxAge time.Duration) (*FileStore, error) {
 	store, err := NewFileStore(root, maxBytes)
 	if err != nil {
@@ -78,12 +77,24 @@ type fileMeta struct {
 	ContentType string `json:"content_type"`
 }
 
+// CleanupReport summarizes one explicit cleanup pass.
+type CleanupReport struct {
+	Root           string
+	Scanned        int
+	Removed        int
+	RemovedBytes   int64
+	Bytes          int64
+	MaxBytes       int64
+	OverMaxBytes   bool
+	ExpiredRemoved int
+}
+
 // Get implements Store.
 func (s *FileStore) Get(_ context.Context, key string) (io.ReadCloser, Entry, error) {
 	dataPath, metaPath := s.paths(key)
 	contentType := ""
 	if s.storeContentType {
-		mb, err := os.ReadFile(metaPath)
+		mb, err := os.ReadFile(metaPath) // #nosec G304 -- metaPath is derived from a SHA-256 cache key under Root.
 		if err != nil {
 			if errors.Is(err, fs.ErrNotExist) {
 				return nil, Entry{}, ErrMiss
@@ -96,7 +107,7 @@ func (s *FileStore) Get(_ context.Context, key string) (io.ReadCloser, Entry, er
 		}
 		contentType = m.ContentType
 	}
-	f, err := os.Open(dataPath)
+	f, err := os.Open(dataPath) // #nosec G304 -- dataPath is derived from a SHA-256 cache key under Root.
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil, Entry{}, ErrMiss
@@ -111,10 +122,6 @@ func (s *FileStore) Get(_ context.Context, key string) (io.ReadCloser, Entry, er
 	storedAt := info.ModTime()
 	if s.expired(storedAt, time.Now()) {
 		_ = f.Close()
-		_ = os.Remove(dataPath)
-		if s.storeContentType {
-			_ = os.Remove(metaPath)
-		}
 		return nil, Entry{}, ErrMiss
 	}
 	return f, Entry{
@@ -153,9 +160,6 @@ func (s *FileStore) Put(_ context.Context, key, contentType string, value io.Rea
 		_ = os.Remove(tmpName)
 		return err
 	}
-	if s.MaxAge > 0 || s.MaxBytes > 0 {
-		s.evict()
-	}
 	return nil
 }
 
@@ -169,7 +173,7 @@ func (s *FileStore) installWithMeta(tmpName, dataPath, metaPath, contentType str
 	}
 	meta := fileMeta{ContentType: contentType}
 	mb, _ := json.Marshal(meta)
-	if err := os.WriteFile(metaPath, mb, 0o640); err != nil {
+	if err := os.WriteFile(metaPath, mb, 0o600); err != nil {
 		_ = os.Remove(dataPath)
 		return err
 	}
@@ -195,19 +199,29 @@ func (s *FileStore) paths(key string) (data, meta string) {
 	return base, base + ".meta"
 }
 
-func (s *FileStore) evict() {
+// Cleanup removes expired cache payloads, then reports whether remaining bytes
+// exceed MaxBytes. It does not delete live entries for size.
+func (s *FileStore) Cleanup(ctx context.Context) (CleanupReport, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	var total int64
-	type entry struct {
-		path    string
-		size    int64
-		modTime time.Time
+	report := CleanupReport{
+		Root:     s.Root,
+		MaxBytes: s.MaxBytes,
 	}
-	var entries []entry
+	root, err := os.OpenRoot(s.Root)
+	if err != nil {
+		return report, err
+	}
+	defer root.Close()
 	now := time.Now()
-	_ = filepath.WalkDir(s.Root, func(p string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
+	err = fs.WalkDir(root.FS(), ".", func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		if d.IsDir() {
 			return nil
 		}
 		if filepath.Ext(p) == ".meta" || strings.HasPrefix(d.Name(), tempFilePrefix) {
@@ -217,46 +231,29 @@ func (s *FileStore) evict() {
 		if err != nil {
 			return nil
 		}
-		metaPath := p + ".meta"
-		if s.storeContentType {
-			if _, err := os.Stat(metaPath); err != nil {
-				if errors.Is(err, fs.ErrNotExist) {
-					_ = os.Remove(p)
-					return nil
-				}
-				return nil
-			}
-		}
-		if s.expired(info.ModTime(), now) {
-			_ = os.Remove(p)
-			if s.storeContentType {
-				_ = os.Remove(metaPath)
-			}
+		if !info.Mode().IsRegular() {
 			return nil
 		}
-		entries = append(entries, entry{path: p, size: info.Size(), modTime: info.ModTime()})
-		total += info.Size()
+		report.Scanned++
+		metaPath := p + ".meta"
+		if !s.expired(info.ModTime(), now) {
+			report.Bytes += info.Size()
+			return nil
+		}
+		_ = root.Remove(p)
+		if s.storeContentType {
+			_ = root.Remove(metaPath)
+		}
+		report.Removed++
+		report.ExpiredRemoved++
+		report.RemovedBytes += info.Size()
 		return nil
 	})
-	if s.MaxBytes <= 0 || total <= s.MaxBytes {
-		return
+	if err != nil {
+		return report, err
 	}
-	sort.Slice(entries, func(i, j int) bool {
-		if entries[i].modTime.Equal(entries[j].modTime) {
-			return entries[i].path < entries[j].path
-		}
-		return entries[i].modTime.Before(entries[j].modTime)
-	})
-	for _, e := range entries {
-		if total <= s.MaxBytes {
-			return
-		}
-		_ = os.Remove(e.path)
-		if s.storeContentType {
-			_ = os.Remove(e.path + ".meta")
-		}
-		total -= e.size
-	}
+	report.OverMaxBytes = s.MaxBytes > 0 && report.Bytes > s.MaxBytes
+	return report, nil
 }
 
 func (s *FileStore) expired(storedAt, now time.Time) bool {

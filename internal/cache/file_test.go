@@ -120,7 +120,7 @@ func TestFileStoreMissDoesNotCreateKeyDirectory(t *testing.T) {
 	}
 }
 
-func TestFileStoreEvictSkipsInFlightTempFiles(t *testing.T) {
+func TestFileStoreCleanupSkipsInFlightTempFiles(t *testing.T) {
 	store, err := NewFileStore(t.TempDir(), 1)
 	if err != nil {
 		t.Fatal(err)
@@ -143,7 +143,7 @@ func TestFileStoreEvictSkipsInFlightTempFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := store.Put(context.Background(), "b", "text/plain", strings.NewReader("b")); err != nil {
+	if _, err := store.Cleanup(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -152,7 +152,39 @@ func TestFileStoreEvictSkipsInFlightTempFiles(t *testing.T) {
 	}
 }
 
-func TestFileStoreConcurrentPutsWithEviction(t *testing.T) {
+func TestFileStoreCleanupKeepsPayloadMissingMeta(t *testing.T) {
+	store, err := NewFileStore(t.TempDir(), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dataPath, _ := store.paths("partial")
+	if err := os.MkdirAll(filepath.Dir(dataPath), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dataPath, []byte("partial"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	report, err := store.Cleanup(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if report.Removed != 0 {
+		t.Fatalf("removed = %d, want 0", report.Removed)
+	}
+	if report.Bytes != int64(len("partial")) {
+		t.Fatalf("bytes = %d, want %d", report.Bytes, len("partial"))
+	}
+	if !report.OverMaxBytes {
+		t.Fatal("expected over max bytes")
+	}
+	if _, err := os.Stat(dataPath); err != nil {
+		t.Fatalf("data stat err = %v, want exists", err)
+	}
+}
+
+func TestFileStoreConcurrentPuts(t *testing.T) {
 	t.Parallel()
 
 	store, err := NewFileStore(t.TempDir(), 1)
@@ -188,7 +220,7 @@ func TestFileStoreConcurrentPutsWithEviction(t *testing.T) {
 	}
 }
 
-func TestFileStoreEvictsWhenOversize(t *testing.T) {
+func TestFileStorePutDoesNotEvictWhenOversize(t *testing.T) {
 	store, err := NewFileStore(t.TempDir(), 5)
 	if err != nil {
 		t.Fatal(err)
@@ -202,8 +234,10 @@ func TestFileStoreEvictsWhenOversize(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, _, err := store.Get(context.Background(), "a"); !errors.Is(err, ErrMiss) {
-		t.Fatalf("a err = %v, want miss", err)
+	if rc, _, err := store.Get(context.Background(), "a"); err != nil {
+		t.Fatalf("a err = %v", err)
+	} else {
+		_ = rc.Close()
 	}
 	if rc, _, err := store.Get(context.Background(), "b"); err != nil {
 		t.Fatalf("b err = %v", err)
@@ -212,7 +246,7 @@ func TestFileStoreEvictsWhenOversize(t *testing.T) {
 	}
 }
 
-func TestFileStoreGetDoesNotRefreshEvictionOrder(t *testing.T) {
+func TestFileStoreCleanupReportsOversize(t *testing.T) {
 	store, err := NewFileStore(t.TempDir(), 8)
 	if err != nil {
 		t.Fatal(err)
@@ -236,23 +270,23 @@ func TestFileStoreGetDoesNotRefreshEvictionOrder(t *testing.T) {
 	if err := store.Put(context.Background(), "c", "text/plain", bytes.NewReader([]byte("90"))); err != nil {
 		t.Fatal(err)
 	}
+	report, err := store.Cleanup(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	if _, _, err := store.Get(context.Background(), "a"); !errors.Is(err, ErrMiss) {
-		t.Fatalf("a err = %v, want miss", err)
+	if !report.OverMaxBytes {
+		t.Fatal("expected over max bytes")
 	}
-	if rc, _, err := store.Get(context.Background(), "b"); err != nil {
-		t.Fatalf("b err = %v", err)
-	} else {
-		_ = rc.Close()
+	if report.Bytes != 10 {
+		t.Fatalf("bytes = %d, want 10", report.Bytes)
 	}
-	if rc, _, err := store.Get(context.Background(), "c"); err != nil {
-		t.Fatalf("c err = %v", err)
-	} else {
-		_ = rc.Close()
+	if report.Removed != 0 {
+		t.Fatalf("removed = %d, want 0", report.Removed)
 	}
 }
 
-func TestFileStoreEvictsByModTime(t *testing.T) {
+func TestFileStoreCleanupDoesNotDeleteOldestForSize(t *testing.T) {
 	store, err := NewFileStore(t.TempDir(), 8)
 	if err != nil {
 		t.Fatal(err)
@@ -279,9 +313,18 @@ func TestFileStoreEvictsByModTime(t *testing.T) {
 	if err := store.Put(context.Background(), "c", "text/plain", bytes.NewReader([]byte("90"))); err != nil {
 		t.Fatal(err)
 	}
+	report, err := store.Cleanup(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	if _, _, err := store.Get(context.Background(), "a"); !errors.Is(err, ErrMiss) {
-		t.Fatalf("a err = %v, want miss", err)
+	if !report.OverMaxBytes {
+		t.Fatal("expected over max bytes")
+	}
+	if rc, _, err := store.Get(context.Background(), "a"); err != nil {
+		t.Fatalf("a err = %v", err)
+	} else {
+		_ = rc.Close()
 	}
 	if rc, _, err := store.Get(context.Background(), "b"); err != nil {
 		t.Fatalf("b err = %v", err)
@@ -295,7 +338,7 @@ func TestFileStoreEvictsByModTime(t *testing.T) {
 	}
 }
 
-func TestFileStoreMaxAgeExpiresOnGet(t *testing.T) {
+func TestFileStoreMaxAgeMissesOnGet(t *testing.T) {
 	store, err := NewFileStoreWithMaxAge(t.TempDir(), 0, time.Hour)
 	if err != nil {
 		t.Fatal(err)
@@ -315,15 +358,15 @@ func TestFileStoreMaxAgeExpiresOnGet(t *testing.T) {
 		t.Fatalf("err = %v, want miss", err)
 	}
 
-	if _, err := os.Stat(dataPath); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("data stat err = %v, want not exist", err)
+	if _, err := os.Stat(dataPath); err != nil {
+		t.Fatalf("data stat err = %v, want exists until cleanup", err)
 	}
-	if _, err := os.Stat(metaPath); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("meta stat err = %v, want not exist", err)
+	if _, err := os.Stat(metaPath); err != nil {
+		t.Fatalf("meta stat err = %v, want exists until cleanup", err)
 	}
 }
 
-func TestFileStoreMaxAgeEvictsOnPut(t *testing.T) {
+func TestFileStoreMaxAgeCleanup(t *testing.T) {
 	store, err := NewFileStoreWithMaxAge(t.TempDir(), 0, time.Hour)
 	if err != nil {
 		t.Fatal(err)
@@ -339,6 +382,13 @@ func TestFileStoreMaxAgeEvictsOnPut(t *testing.T) {
 
 	if err := store.Put(context.Background(), "new", "text/plain", strings.NewReader("new")); err != nil {
 		t.Fatal(err)
+	}
+	report, err := store.Cleanup(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.ExpiredRemoved != 1 {
+		t.Fatalf("expired removed = %d, want 1", report.ExpiredRemoved)
 	}
 	if _, _, err := store.Get(context.Background(), "old"); !errors.Is(err, ErrMiss) {
 		t.Fatalf("old err = %v, want miss", err)
