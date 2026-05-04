@@ -34,6 +34,7 @@ import (
 	"github.com/libops/triplet/internal/iiif/image/v3/types"
 	"github.com/libops/triplet/internal/redact"
 	"github.com/libops/triplet/internal/storage"
+	tvips "github.com/libops/triplet/internal/vips"
 )
 
 // Handler serves the Image API 3.0 surface mounted at Prefix.
@@ -53,7 +54,7 @@ type Handler struct {
 	infoLimits        types.Limits
 	maxSourcePixels   int64
 	maxSourceBytes    int64
-	vipsLimiter       chan struct{}
+	vipsLimiter       *tvips.Limiter
 	logger            *slog.Logger
 }
 
@@ -76,9 +77,9 @@ func New(prefix, publicBaseURL string, src storage.Opener, pipe *pipeline.Pipeli
 	if derivCache == nil {
 		derivCache = cache.Noop{}
 	}
-	var vipsLimiter chan struct{}
-	if maxConcurrentTransforms > 0 {
-		vipsLimiter = make(chan struct{}, maxConcurrentTransforms)
+	vipsLimiter := tvips.NewLimiter(maxConcurrentTransforms)
+	if pipe != nil {
+		pipe.SetLimiter(vipsLimiter)
 	}
 	return &Handler{
 		prefix:            strings.TrimRight(prefix, "/"),
@@ -140,6 +141,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) serveInfo(w http.ResponseWriter, r *http.Request, identifier string) {
 	width, height, err := h.imageDimensions(r.Context(), identifier)
 	if err != nil {
+		if errors.Is(err, pipeline.ErrBusy) {
+			writeError(w, http.StatusServiceUnavailable, "server busy")
+			return
+		}
 		if errors.Is(err, storage.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "identifier not found")
 			return
@@ -238,14 +243,8 @@ func (h *Handler) serveImage(w http.ResponseWriter, r *http.Request, req parse.R
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("X-Cache", "miss")
 
-	release, err := h.acquireVips(r.Context())
-	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, "server busy")
-		return
-	}
 	tmp, err := os.CreateTemp("", "triplet-derivative-*")
 	if err != nil {
-		release()
 		h.logger.Error("create derivative temp file", "identifier", redact.Identifier(req.Identifier), "identifier_hash", redact.Hash(req.Identifier), "err", err)
 		writeError(w, http.StatusInternalServerError, "failed to prepare response")
 		return
@@ -253,11 +252,12 @@ func (h *Handler) serveImage(w http.ResponseWriter, r *http.Request, req parse.R
 	defer os.Remove(tmp.Name())
 	defer tmp.Close()
 
-	result, err := func() (pipeline.Result, error) {
-		defer release()
-		return h.pipeline.Transform(r.Context(), req, tmp)
-	}()
+	result, err := h.pipeline.Transform(r.Context(), req, tmp)
 	if err != nil {
+		if errors.Is(err, pipeline.ErrBusy) {
+			writeError(w, http.StatusServiceUnavailable, "server busy")
+			return
+		}
 		if errors.Is(err, storage.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "identifier not found")
 			return
@@ -313,12 +313,6 @@ func (h *Handler) serveImage(w http.ResponseWriter, r *http.Request, req parse.R
 }
 
 func (h *Handler) imageDimensions(ctx context.Context, identifier string) (int, int, error) {
-	release, err := h.acquireVips(ctx)
-	if err != nil {
-		return 0, 0, fmt.Errorf("acquire vips worker: %w", err)
-	}
-	defer release()
-
 	rc, meta, err := h.src.Open(ctx, identifier)
 	if err != nil {
 		return 0, 0, err
@@ -364,6 +358,12 @@ func (h *Handler) imageDimensions(ctx context.Context, identifier string) (int, 
 			return 0, 0, fmt.Errorf("close source temp file: %w", err)
 		}
 	}
+	release, err := h.vipsLimiter.Acquire(ctx)
+	if err != nil {
+		return 0, 0, fmt.Errorf("%w: acquire vips worker: %w", pipeline.ErrBusy, err)
+	}
+	defer release()
+
 	params := gv.NewImportParams()
 	params.Access.Set(gv.AccessSequential)
 	img, err := gv.LoadImageFromFileDirect(path, params)
@@ -575,18 +575,6 @@ func (h *Handler) derivativeInvalidationVersion(ctx context.Context, identifier 
 		return entry.StoredAt.UTC().Format(time.RFC3339Nano)
 	}
 	return ""
-}
-
-func (h *Handler) acquireVips(ctx context.Context) (func(), error) {
-	if h.vipsLimiter == nil {
-		return func() {}, nil
-	}
-	select {
-	case h.vipsLimiter <- struct{}{}:
-		return func() { <-h.vipsLimiter }, nil
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	}
 }
 
 func writeError(w http.ResponseWriter, status int, msg string) {
