@@ -217,7 +217,7 @@ func (l *LocalURLFallback) openLocal(ctx context.Context, identifier string) (io
 					l.debug(ctx, "local url auth denied local file", identifier, "operation", "open", "prefix", mapping.Prefix, "err", authErr)
 					return nil, Meta{}, false, authErr
 				}
-				rc, err := os.Open(diskPath)
+				rc, err := os.Open(diskPath) // #nosec G304 -- diskPath is returned by ocflMeta after object-root validation.
 				if err != nil {
 					if errors.Is(err, fs.ErrNotExist) {
 						l.debug(ctx, "local url ocfl content missing", identifier, "operation", "open", "prefix", mapping.Prefix, "path", path, "disk_path", diskPath)
@@ -786,7 +786,7 @@ func (l *LocalURLFallback) ocflDiskPath(mapping LocalURLMapping, path string) (s
 	}
 	ocflDir := ocflDir(mapping.File.Root, "info:fedora/"+path)
 	inventoryPath := filepath.Join(ocflDir, "extensions", "0005-mutable-head", "head", "inventory.json")
-	body, err := os.ReadFile(inventoryPath)
+	body, err := os.ReadFile(inventoryPath) // #nosec G304 -- inventoryPath is derived from the configured OCFL root and object hash.
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return "", fmt.Errorf("%w: ocfl inventory", ErrNotFound)
