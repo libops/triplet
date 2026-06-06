@@ -14,23 +14,23 @@ ARG \
     # renovate: datasource=repology depName=debian_13/ca-certificates
     CA_CERTIFICATES_VERSION=20250419 \
     # renovate: datasource=repology depName=debian_13/curl
-    CURL_VERSION=8.14.1-2+deb13u2 \
+    CURL_VERSION=8.14.1-2+deb13u3 \
     # renovate: datasource=repology depName=debian_13/libcgif-dev
     LIBCGIF_DEV_VERSION=0.5.0-1 \
     # renovate: datasource=repology depName=debian_13/libexpat1-dev
     LIBEXPAT1_DEV_VERSION=2.7.1-2 \
     # renovate: datasource=repology depName=debian_13/libglib2.0-dev
-    LIBGLIB2_0_DEV_VERSION=2.84.4-3~deb13u2 \
+    LIBGLIB2_0_DEV_VERSION=2.84.4-3~deb13u3 \
     # renovate: datasource=repology depName=debian_13/libimagequant-dev
     LIBIMAGEQUANT_DEV_VERSION=2.18.0-1+b2 \
     # renovate: datasource=repology depName=debian_13/libjpeg62-turbo-dev
     LIBJPEG62_TURBO_DEV_VERSION=1:2.1.5-4 \
     # renovate: datasource=repology depName=debian_13/liblcms2-dev
-    LIBLCMS2_DEV_VERSION=2.16-2 \
+    LIBLCMS2_DEV_VERSION=2.16-2+deb13u2 \
     # renovate: datasource=repology depName=debian_13/libopenjp2-7-dev
-    LIBOPENJP2_7_DEV_VERSION=2.5.3-2.1~deb13u1 \
+    LIBOPENJP2_7_DEV_VERSION=2.5.3-2.1~deb13u2 \
     # renovate: datasource=repology depName=debian_13/libpng-dev
-    LIBPNG_DEV_VERSION=1.6.48-1+deb13u4 \
+    LIBPNG_DEV_VERSION=1.6.48-1+deb13u5 \
     # renovate: datasource=repology depName=debian_13/libspng-dev
     LIBSPNG_DEV_VERSION=0.7.4-2 \
     # renovate: datasource=repology depName=debian_13/libtiff-dev
