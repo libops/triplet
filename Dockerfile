@@ -1,13 +1,13 @@
-# syntax=docker/dockerfile:1.23@sha256:2780b5c3bab67f1f76c781860de469442999ed1a0d7992a5efdf2cffc0e3d769
+# syntax=docker/dockerfile:1.25@sha256:0adf442eae370b6087e08edc7c50b552d80ddf261576f4ebd6421006b2461f12
 
-FROM debian:trixie-20260421@sha256:35b8ff74ead4880f22090b617372daff0ccae742eb5674455d542bef71ef1999 AS vips-build
+FROM debian:trixie-20260610@sha256:fe7312b5f05bf5f43fad76bcd8945642e4e47a68aefd1b73f447615899d0fac1 AS vips-build
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 ARG TARGETARCH
 
 # renovate: datasource=github-releases depName=libvips packageName=libvips/libvips
-ARG VIPS_VERSION=8.18.2
+ARG VIPS_VERSION=8.18.3
 ARG \
     # renovate: datasource=repology depName=debian_13/build-essential
     BUILD_ESSENTIAL_VERSION=12.12 \
@@ -120,7 +120,7 @@ RUN curl -fsSL -o vips.tar.xz "https://github.com/libvips/libvips/releases/downl
   && rm -rf /tmp/vips*
 
 FROM vips-build AS base
-COPY --from=golang:1.26-bookworm@sha256:47ce5636e9936b2c5cbf708925578ef386b4f8872aec74a67bd13a627d242b19 /usr/local/go /usr/local/go
+COPY --from=golang:1.26-bookworm@sha256:5f68ec6805843bd3981a951ffada82a26a0bd2631045c8f7dba483fa868f5ec5 /usr/local/go /usr/local/go
 
 WORKDIR /src
 ENV PATH=/usr/local/go/bin:$PATH
@@ -147,7 +147,7 @@ FROM base AS test-runner
 WORKDIR /app
 ENTRYPOINT ["/bin/bash"]
 
-FROM debian:trixie-20260421@sha256:35b8ff74ead4880f22090b617372daff0ccae742eb5674455d542bef71ef1999 AS runtime
+FROM debian:trixie-20260610@sha256:fe7312b5f05bf5f43fad76bcd8945642e4e47a68aefd1b73f447615899d0fac1 AS runtime
 
 ENV LD_LIBRARY_PATH=/usr/local/lib/x86_64-linux-gnu:/usr/local/lib
 ENV TRIPLET_PUBLIC_BASE_URL=http://localhost:8080
