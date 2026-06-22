@@ -162,17 +162,17 @@ ARG \
     # renovate: datasource=repology depName=debian_13/libexpat1
     LIBEXPAT1_VERSION=2.7.1-2 \
     # renovate: datasource=repology depName=debian_13/libglib2.0-0t64
-    LIBGLIB2_0_0T64_VERSION=2.84.4-3~deb13u2 \
+    LIBGLIB2_0_0T64_VERSION=2.84.4-3~deb13u3 \
     # renovate: datasource=repology depName=debian_13/libimagequant0
     LIBIMAGEQUANT0_VERSION=2.18.0-1+b2 \
     # renovate: datasource=repology depName=debian_13/libjpeg62-turbo
     LIBJPEG62_TURBO_VERSION=1:2.1.5-4 \
     # renovate: datasource=repology depName=debian_13/liblcms2-2
-    LIBLCMS2_2_VERSION=2.16-2 \
+    LIBLCMS2_2_VERSION=2.16-2+deb13u2 \
     # renovate: datasource=repology depName=debian_13/libopenjp2-7
     LIBOPENJP2_7_VERSION=2.5.3-2.1~deb13u1 \
     # renovate: datasource=repology depName=debian_13/libpng16-16t64
-    LIBPNG16_16T64_VERSION=1.6.48-1+deb13u4 \
+    LIBPNG16_16T64_VERSION=1.6.48-1+deb13u5 \
     # renovate: datasource=repology depName=debian_13/libspng0
     LIBSPNG0_VERSION=0.7.4-2 \
     # renovate: datasource=repology depName=debian_13/libtiff6
