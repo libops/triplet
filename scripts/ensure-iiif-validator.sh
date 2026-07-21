@@ -8,11 +8,10 @@ VALIDATOR="$VENV_DIR/bin/iiif-validate.py"
 PACKAGE_VERSION="${IIIF_VALIDATOR_VERSION:-1.0.5}"
 
 check_runtime() {
-  if "$VENV_DIR/bin/python" - <<'PY' >/dev/null 2>&1
-import magic
-magic.from_buffer(b"IIIF validator libmagic check")
-PY
-  then
+  # The installed entry point imports python-magic before it processes CLI
+  # arguments, so --help verifies both the Python package and native libmagic
+  # without embedding Python source in this shell script.
+  if "$VALIDATOR" --help >/dev/null 2>&1; then
     return 0
   fi
 

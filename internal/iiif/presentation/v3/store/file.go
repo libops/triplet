@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -11,8 +13,9 @@ import (
 	"sync"
 )
 
-// FileStore reads manifest documents from a filesystem root.
-// Manifests are stored at {root}/{itemID}/manifest.json.
+// FileStore persists path-keyed Presentation resources beneath a filesystem
+// root. Keys are hashed before becoming filenames, avoiding path traversal,
+// platform filename limits, and resource/directory name collisions.
 type FileStore struct {
 	root     string
 	realRoot string
@@ -39,85 +42,114 @@ func NewFileStore(root string) (*FileStore, error) {
 	return &FileStore{root: abs, realRoot: realRoot}, nil
 }
 
-// GetManifest implements Store.
-func (s *FileStore) GetManifest(_ context.Context, itemID string) ([]byte, error) {
-	path, err := s.resolveRead(itemID, "manifest.json")
+// Get implements Store.
+func (s *FileStore) Get(_ context.Context, resourceKey string) (Document, error) {
+	path, err := s.resourcePath(resourceKey)
 	if err != nil {
-		return nil, err
+		return Document{}, err
 	}
-	b, err := os.ReadFile(path)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	path, err = s.resolveRead(path)
+	if err != nil {
+		return Document{}, err
+	}
+	body, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return nil, ErrNotFound
+			return Document{}, ErrNotFound
 		}
-		return nil, err
+		return Document{}, err
 	}
-	return b, nil
-}
-
-// GetAnnotationPage implements Store.
-func (s *FileStore) GetAnnotationPage(_ context.Context, itemID, canvasID string) ([]byte, error) {
-	path, err := s.resolveRead(itemID, "canvas", canvasID, "annotations.json")
-	if err != nil {
-		return nil, err
-	}
-	b, err := os.ReadFile(path)
+	info, err := os.Stat(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return nil, ErrNotFound
+			return Document{}, ErrNotFound
 		}
-		return nil, err
+		return Document{}, err
 	}
-	return b, nil
+	return Document{Body: body, ModifiedAt: info.ModTime().UTC()}, nil
 }
 
-// PutAnnotationPage implements Store.
-func (s *FileStore) PutAnnotationPage(_ context.Context, itemID, canvasID string, body []byte, ifMatch string) error {
-	path, err := s.resolve(itemID, "canvas", canvasID, "annotations.json")
+// Put implements Store.
+func (s *FileStore) Put(_ context.Context, resourceKey string, body []byte, conditions Preconditions) (bool, error) {
+	path, err := s.resourcePath(resourceKey)
 	if err != nil {
-		return err
+		return false, err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	dir := filepath.Dir(path)
 	if err := s.ensureCreatePathContained(dir); err != nil {
-		return err
+		return false, err
 	}
 	if err := os.MkdirAll(dir, 0o750); err != nil {
-		return err
+		return false, err
 	}
 	if err := s.ensureContained(dir); err != nil {
-		return err
+		return false, err
 	}
-	if err := s.checkAnnotationPagePrecondition(path, ifMatch); err != nil {
-		return err
+	current, err := os.ReadFile(path)
+	exists := err == nil
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return false, err
 	}
-	return atomicWriteFile(path, body, 0o600)
+	currentETag := ""
+	if exists {
+		currentETag = DocumentETag(current)
+	}
+	if !putPreconditionMatches(exists, currentETag, conditions) {
+		return false, ErrPreconditionFailed
+	}
+	if err := atomicWriteFile(path, body, 0o600); err != nil {
+		return false, err
+	}
+	return !exists, nil
 }
 
-func (s *FileStore) checkAnnotationPagePrecondition(path, ifMatch string) error {
-	current, err := os.ReadFile(path)
+// Delete implements Store.
+func (s *FileStore) Delete(_ context.Context, resourceKey, ifMatch string) error {
+	path, err := s.resourcePath(resourceKey)
 	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			if ifMatch == "*" {
-				return nil
-			}
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	path, err = s.resolveRead(path)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
 			return ErrPreconditionFailed
 		}
 		return err
 	}
-	if ifMatch == "*" {
-		return ErrPreconditionFailed
+	current, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return ErrPreconditionFailed
+		}
+		return err
 	}
 	if !IfMatchMatches(ifMatch, DocumentETag(current)) {
 		return ErrPreconditionFailed
 	}
-	return nil
+	if err := os.Remove(path); err != nil {
+		return err
+	}
+	return syncDirectory(filepath.Dir(path))
+}
+
+func (s *FileStore) resourcePath(resourceKey string) (string, error) {
+	if !validResourceKey(resourceKey) {
+		return "", ErrNotFound
+	}
+	sum := sha256.Sum256([]byte(resourceKey))
+	digest := hex.EncodeToString(sum[:])
+	return filepath.Join(s.root, "resources", digest[:2], digest+".json"), nil
 }
 
 func atomicWriteFile(path string, body []byte, perm fs.FileMode) error {
 	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, ".annotations-*.tmp")
+	tmp, err := os.CreateTemp(dir, ".presentation-*.tmp")
 	if err != nil {
 		return err
 	}
@@ -147,46 +179,19 @@ func atomicWriteFile(path string, body []byte, perm fs.FileMode) error {
 		return err
 	}
 	cleanup = false
-	dirHandle, err := os.Open(dir)
+	return syncDirectory(dir)
+}
+
+func syncDirectory(dir string) error {
+	handle, err := os.Open(dir)
 	if err != nil {
 		return err
 	}
-	defer dirHandle.Close()
-	return dirHandle.Sync()
+	defer handle.Close()
+	return handle.Sync()
 }
 
-func (s *FileStore) resolve(itemID string, elems ...string) (string, error) {
-	if itemID == "" || strings.ContainsAny(itemID, "\x00\n\r") {
-		return "", ErrNotFound
-	}
-	cleanItem := filepath.Clean(itemID)
-	if cleanItem == "." || cleanItem == "/" || cleanItem == ".." || strings.HasPrefix(cleanItem, ".."+string(filepath.Separator)) || filepath.IsAbs(cleanItem) {
-		return "", ErrNotFound
-	}
-	parts := []string{s.root, cleanItem}
-	for _, elem := range elems {
-		if elem == "" || strings.ContainsAny(elem, "\x00\n\r") {
-			return "", ErrNotFound
-		}
-		clean := filepath.Clean(elem)
-		if clean == "." || clean == "/" || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) || filepath.IsAbs(clean) {
-			return "", ErrNotFound
-		}
-		parts = append(parts, clean)
-	}
-	path := filepath.Join(parts...)
-	rel, err := filepath.Rel(s.root, path)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", ErrNotFound
-	}
-	return path, nil
-}
-
-func (s *FileStore) resolveRead(itemID string, elems ...string) (string, error) {
-	path, err := s.resolve(itemID, elems...)
-	if err != nil {
-		return "", err
-	}
+func (s *FileStore) resolveRead(path string) (string, error) {
 	realPath, err := filepath.EvalSymlinks(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {

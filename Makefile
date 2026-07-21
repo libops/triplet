@@ -1,4 +1,4 @@
-.PHONY: build test test-integration test-race test-asan install-tools conformance benchmark-fixtures benchmark-iiif benchmark-iiif-pr lint generate fmt docker clean help docs-docker-build docs-build docs-serve docs-preview docs-clean
+.PHONY: build test test-integration test-race test-asan install-tools conformance benchmark-fixtures benchmark-iiif benchmark-iiif-pr check-no-inline-python lint generate fmt docker clean help docs-docker-build docs-build docs-serve docs-preview docs-clean
 
 BIN ?= bin/triplet
 PKG ?= ./...
@@ -42,7 +42,10 @@ benchmark-iiif:
 benchmark-iiif-pr:
 	/bin/bash ./scripts/benchmark-iiif-pr.sh
 
-lint:
+check-no-inline-python:
+	go test ./internal/contracts -run TestShellScriptsDoNotInlinePython -count=1
+
+lint: check-no-inline-python
 	golangci-lint run $(PKG)
 
 fmt:

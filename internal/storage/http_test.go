@@ -161,6 +161,114 @@ func TestHTTPOpenerRejectsRedirectToDeniedHost(t *testing.T) {
 	}
 }
 
+func TestHTTPOpenerForwardsOnlyAuthHeadersWhenEnabled(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		t.Run(strconv.FormatBool(enabled), func(t *testing.T) {
+			var requests []http.Header
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests = append(requests, r.Header.Clone())
+				w.Header().Set("Content-Type", "image/png")
+				_, _ = w.Write([]byte("image"))
+			}))
+			defer srv.Close()
+
+			op := NewHTTPOpener([]string{srv.URL}, 5*time.Second, 0)
+			op.AllowPrivateHosts = true
+			op.ForwardAuthHeaders = enabled
+			ctx := ContextWithAuthHeaders(context.Background(), http.Header{
+				"Authorization": []string{"Bearer caller-token"},
+				"Cookie":        []string{"session=caller-session"},
+				"X-Arbitrary":   []string{"must-not-forward"},
+			})
+			rc, _, err := op.Open(ctx, srv.URL+"/source")
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, _ = io.ReadAll(rc)
+			_ = rc.Close()
+			if len(requests) == 0 {
+				t.Fatal("upstream received no requests")
+			}
+			for _, headers := range requests {
+				wantAuthorization := ""
+				wantCookie := ""
+				if enabled {
+					wantAuthorization = "Bearer caller-token"
+					wantCookie = "session=caller-session"
+				}
+				if got := headers.Get("Authorization"); got != wantAuthorization {
+					t.Fatalf("Authorization = %q, want %q", got, wantAuthorization)
+				}
+				if got := headers.Get("Cookie"); got != wantCookie {
+					t.Fatalf("Cookie = %q, want %q", got, wantCookie)
+				}
+				if got := headers.Get("X-Arbitrary"); got != "" {
+					t.Fatalf("X-Arbitrary was forwarded: %q", got)
+				}
+			}
+		})
+	}
+}
+
+func TestHTTPOpenerStripsAuthHeadersOnCrossOriginRedirect(t *testing.T) {
+	var finalHeaders []http.Header
+	final := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		finalHeaders = append(finalHeaders, r.Header.Clone())
+		_, _ = w.Write([]byte("image"))
+	}))
+	defer final.Close()
+	redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, final.URL+"/source", http.StatusTemporaryRedirect)
+	}))
+	defer redirector.Close()
+
+	op := NewHTTPOpener([]string{redirector.URL, final.URL}, 5*time.Second, 0)
+	op.AllowPrivateHosts = true
+	op.ForwardAuthHeaders = true
+	ctx := ContextWithAuthHeaders(context.Background(), http.Header{
+		"Authorization": []string{"Bearer caller-token"},
+		"Cookie":        []string{"session=caller-session"},
+	})
+	rc, _, err := op.Open(ctx, redirector.URL+"/redirect")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = io.ReadAll(rc)
+	_ = rc.Close()
+	if len(finalHeaders) == 0 {
+		t.Fatal("redirect target received no requests")
+	}
+	for _, headers := range finalHeaders {
+		if headers.Get("Authorization") != "" || headers.Get("Cookie") != "" {
+			t.Fatalf("redirect target received credentials: %#v", headers)
+		}
+	}
+}
+
+func TestHTTPOpenerRedactsSourceQueryFromErrors(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "failed", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+	op := NewHTTPOpener([]string{srv.URL}, 5*time.Second, 0)
+	op.AllowPrivateHosts = true
+	_, _, err := op.Open(context.Background(), srv.URL+"/source?token=super-secret")
+	if err == nil {
+		t.Fatal("upstream failure accepted")
+	}
+	if strings.Contains(err.Error(), "super-secret") || !strings.Contains(err.Error(), "redacted") {
+		t.Fatalf("error did not redact query: %v", err)
+	}
+}
+
+func TestHTTPOpenerRejectsURLCredentials(t *testing.T) {
+	op := NewHTTPOpener([]string{"https://repository.example.edu"}, 5*time.Second, 0)
+	_, _, err := op.Open(context.Background(), "https://user:secret@repository.example.edu/source.tif")
+	if !errors.Is(err, ErrNotFound) || !strings.Contains(err.Error(), "must not contain URL credentials") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func TestHTTPOpenerUsesRangeRequests(t *testing.T) {
 	body := []byte("0123456789")
 	var ranges []string
@@ -289,7 +397,25 @@ func TestHTTPOpenerMetaUsesHEAD(t *testing.T) {
 }
 
 func TestHTTPOpenerBlocksPrivateAddressesByDefault(t *testing.T) {
-	for _, raw := range []string{"127.0.0.1", "10.0.0.1", "172.16.0.1", "192.168.1.1", "169.254.169.254", "::1", "fc00::1", "fe80::1"} {
+	for _, raw := range []string{
+		"0.1.2.3",
+		"10.0.0.1",
+		"100.100.100.200",
+		"127.0.0.1",
+		"169.254.169.254",
+		"172.16.0.1",
+		"192.0.2.1",
+		"192.168.1.1",
+		"198.18.0.1",
+		"198.51.100.1",
+		"203.0.113.1",
+		"240.0.0.1",
+		"::1",
+		"100::1",
+		"2001:db8::1",
+		"fc00::1",
+		"fe80::1",
+	} {
 		t.Run(raw, func(t *testing.T) {
 			if !privateAddressBlocked(net.ParseIP(raw)) {
 				t.Fatalf("%s was not blocked", raw)

@@ -184,6 +184,10 @@ loopback, link-local, and metadata addresses are blocked unless
 `sources.http.allow_private_hosts` is explicitly enabled. When private hosts are
 blocked, Triplet resolves the hostname once and connects only to a verified
 public IP, so DNS rebinding cannot swap the connection target after validation.
+Shared, benchmarking, documentation, and reserved address ranges are treated as
+non-public. Source identifiers containing URL userinfo credentials are rejected;
+caller credentials can enter this boundary only through the explicit forwarding
+option below.
 
 ```yaml
 sources:
@@ -191,6 +195,28 @@ sources:
     allowed_origins:
       - https://repository.example.edu
     allow_private_hosts: false
+    forward_auth_headers: false
     request_timeout: 2m
     max_bytes: 50MiB
 ```
+
+### Protected HTTP sources
+
+For an ordinary HTTP source that authorizes each caller, opt in explicitly:
+
+```yaml
+sources:
+  default: http
+  http:
+    allowed_origins:
+      - https://repository.example.edu
+    forward_auth_headers: true
+    metadata_cache_ttl: 0
+```
+
+Triplet copies only `Cookie` and `Authorization` from the incoming image
+request. The initial target and every redirect must be an exact allowed origin;
+credentials are removed on cross-origin redirects even when the destination is
+also allowed. Shared source-byte and metadata caches are incompatible with this
+mode and configuration validation rejects them. The Image handler still checks
+the protected source before it can serve a shared derivative-cache hit.

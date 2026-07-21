@@ -136,11 +136,15 @@ type FileURLMapping struct {
 
 // HTTPSource resolves identifiers that are HTTP(S) URLs.
 type HTTPSource struct {
-	AllowedOrigins    []string      `yaml:"allowed_origins"`
-	AllowPrivateHosts bool          `yaml:"allow_private_hosts"`
-	RequestTimeout    time.Duration `yaml:"request_timeout"`
-	MaxBytes          ByteSize      `yaml:"max_bytes"`
-	MetadataCacheTTL  time.Duration `yaml:"metadata_cache_ttl"`
+	AllowedOrigins    []string `yaml:"allowed_origins"`
+	AllowPrivateHosts bool     `yaml:"allow_private_hosts"`
+	// ForwardAuthHeaders forwards only Cookie and Authorization from the
+	// incoming image request to exact allowed origins. It is opt-in because
+	// those values are caller credentials.
+	ForwardAuthHeaders bool          `yaml:"forward_auth_headers"`
+	RequestTimeout     time.Duration `yaml:"request_timeout"`
+	MaxBytes           ByteSize      `yaml:"max_bytes"`
+	MetadataCacheTTL   time.Duration `yaml:"metadata_cache_ttl"`
 }
 
 // Cache declares optional derivative-cache settings.
@@ -333,7 +337,7 @@ func (c *Config) validate() error {
 	if err != nil {
 		return fmt.Errorf("server.public_base_url: %w", err)
 	}
-	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil {
 		return fmt.Errorf("server.public_base_url: must be an absolute http(s) URL, got %q", c.Server.PublicBaseURL)
 	}
 	if u.RawQuery != "" || u.Fragment != "" {
@@ -453,6 +457,12 @@ func (c *Config) validate() error {
 		if c.Sources.HTTP.MetadataCacheTTL < 0 {
 			return errors.New("sources.http.metadata_cache_ttl: must be >= 0")
 		}
+		if c.Sources.HTTP.ForwardAuthHeaders && c.Sources.HTTP.MetadataCacheTTL > 0 {
+			return errors.New("sources.http.metadata_cache_ttl must be 0 when sources.http.forward_auth_headers = true")
+		}
+		if c.Sources.HTTP.ForwardAuthHeaders && c.Cache.SourceRoot != "" {
+			return errors.New("cache.source_root must be empty when sources.http.forward_auth_headers = true")
+		}
 	}
 	if c.Sources.File != nil {
 		for _, prefix := range c.Sources.File.URLPrefixes {
@@ -519,7 +529,7 @@ func validateAllowedOrigins(name string, origins []string) error {
 			return fmt.Errorf("%s: origin %q must not contain whitespace", name, origin)
 		}
 		u, err := url.Parse(origin)
-		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
 			return fmt.Errorf("%s: origin %q must be an absolute http(s) origin or *", name, origin)
 		}
 	}

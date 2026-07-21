@@ -124,8 +124,9 @@ func Build(cfg *config.Config, logger *slog.Logger) (*http.Server, error) {
 		}
 		h := preshandler.New(
 			cfg.IIIF.Presentation.Prefix,
+			cfg.Server.PublicBaseURL,
 			st,
-			cors.New(cfg.IIIF.AllowedOrigins, "ETag"),
+			cors.New(cfg.IIIF.AllowedOrigins, "ETag, Last-Modified, Content-Length, Location"),
 			cfg.IIIF.Presentation.WriteEnabled,
 			cfg.IIIF.Presentation.WriteToken,
 			logger,
@@ -264,6 +265,7 @@ func buildSource(cfg *config.Config, logger *slog.Logger) (storage.Opener, func(
 			int64(cfg.Sources.HTTP.MaxBytes),
 		)
 		op.AllowPrivateHosts = cfg.Sources.HTTP.AllowPrivateHosts
+		op.ForwardAuthHeaders = cfg.Sources.HTTP.ForwardAuthHeaders
 		authOp := storage.NewHTTPOpener(
 			cfg.Sources.HTTP.AllowedOrigins,
 			cfg.Sources.HTTP.RequestTimeout,

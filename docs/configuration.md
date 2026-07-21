@@ -61,8 +61,54 @@ iiif:
 ```
 
 When Presentation is enabled, Triplet exposes `ETag` through CORS so browser
-annotation editors can read it and send optimistic-concurrency writes with
-`If-Match`.
+clients can perform conditional reads and optimistic-concurrency writes. It
+also exposes `Last-Modified`, `Content-Length`, and `Location`.
+
+## Presentation resources
+
+Triplet stores byte-exact Presentation resources at arbitrary normalized paths
+beneath `iiif.presentation.prefix`. For example, a deployment can choose paths
+such as `/presentation/v3/items/123/manifest` and
+`/presentation/v3/items/123/canvas/1/annotations`; Triplet does not impose an
+application identifier or tenancy scheme.
+
+The JSON-LD `id` of every stored resource must exactly equal the public URL
+built from `server.public_base_url`, the Presentation prefix, and its canonical
+path. Query strings, path traversal, encoded separators, and non-canonical
+escaping are rejected. Supported top-level resources are `Manifest`, `Canvas`,
+`Collection`, `AnnotationCollection`, `AnnotationPage`, and `Annotation`.
+
+`GET` and `HEAD` return strong `ETag` and `Last-Modified` validators. They
+honor `If-None-Match` and `If-Modified-Since`. When writes are enabled, a Bearer
+token protects both mutation methods:
+
+- Create with `PUT` and `If-None-Match: *`; success returns `201 Created` and
+  `Location`.
+- Replace with `PUT` and a current strong `If-Match` value (or `*` when any
+  existing representation is acceptable); success returns `204 No Content`.
+- Delete with `DELETE` and a current strong `If-Match` value (or `*`); success
+  returns `204 No Content`.
+
+Missing conditions return `428 Precondition Required`; stale conditions return
+`412 Precondition Failed`. PUT accepts `application/json` and
+`application/ld+json` bodies up to 8 MiB.
+
+Configure one Presentation backend. The filesystem layout is private and
+hashes public paths to avoid path and filename ambiguity. Its compare-and-swap
+lock is process-local, so use it for a single Triplet process only. Replicated
+deployments use the MariaDB backend, whose transactional compare-and-swap uses
+one generic byte-preserving resource table without foreign keys.
+
+```yaml
+iiif:
+  presentation:
+    enabled: true
+    prefix: /presentation/v3
+    root: ./testdata/presentation
+    # dsn: triplet:triplet@tcp(mariadb:3306)/triplet?parseTime=true
+    write_enabled: true
+    write_token: ${TRIPLET_PRESENTATION_WRITE_TOKEN}
+```
 
 ## Image safety limits
 
@@ -167,6 +213,7 @@ sources:
     allowed_origins:
       - https://repository.example.edu
     allow_private_hosts: false
+    forward_auth_headers: false
     request_timeout: 2m
     max_bytes: 50MiB
 ```
@@ -218,6 +265,18 @@ sources:
     max_bytes: 50MiB
     metadata_cache_ttl: 5m
 ```
+
+Set `forward_auth_headers: true` only when an exact allowed source origin
+authorizes the caller that requested the IIIF image. Triplet then forwards only
+the incoming `Cookie` and `Authorization` fields; it never forwards arbitrary
+headers, and it strips both credentials before a cross-origin redirect. Use
+HTTPS or an equivalently protected internal transport.
+
+Shared source-byte caching (`cache.source_root`) and shared metadata caching
+(`sources.http.metadata_cache_ttl`) are rejected in this mode. Triplet contacts
+the source on every request before serving a derivative-cache hit, so an
+authorized caller cannot populate a source or metadata result that an
+anonymous caller can reuse without authorization.
 
 The HTTP host allowlist is a source-fetch boundary. See
 [Authorization](authorization.md#source-fetch-boundary) for origin, redirect,
