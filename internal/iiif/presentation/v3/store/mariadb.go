@@ -6,8 +6,9 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"time"
 
-	_ "github.com/go-sql-driver/mysql"
+	mysql "github.com/go-sql-driver/mysql"
 )
 
 type MariaDBStore struct {
@@ -49,15 +50,73 @@ func (s *MariaDBStore) Close() error {
 	return s.db.Close()
 }
 
-func (s *MariaDBStore) GetManifest(ctx context.Context, itemID string) ([]byte, error) {
-	return getJSON(ctx, s.db, selectManifestSQL, itemID)
+// Get implements Store.
+func (s *MariaDBStore) Get(ctx context.Context, resourceKey string) (Document, error) {
+	if !validResourceKey(resourceKey) {
+		return Document{}, ErrNotFound
+	}
+	var body []byte
+	var modifiedAt time.Time
+	err := s.db.QueryRowContext(ctx, selectResourceSQL, resourceKey).Scan(&body, &modifiedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Document{}, ErrNotFound
+	}
+	if err != nil {
+		return Document{}, err
+	}
+	return Document{Body: body, ModifiedAt: modifiedAt.UTC()}, nil
 }
 
-func (s *MariaDBStore) GetAnnotationPage(ctx context.Context, itemID, canvasID string) ([]byte, error) {
-	return getJSON(ctx, s.db, selectAnnotationPageSQL, itemID, canvasID)
+// Put implements Store.
+func (s *MariaDBStore) Put(ctx context.Context, resourceKey string, body []byte, conditions Preconditions) (bool, error) {
+	if !validResourceKey(resourceKey) {
+		return false, ErrNotFound
+	}
+	if conditions.IfNoneMatch != "" {
+		if !putPreconditionMatches(false, "", conditions) {
+			return false, ErrPreconditionFailed
+		}
+		if _, err := s.db.ExecContext(ctx, insertResourceSQL, resourceKey, body); err != nil {
+			if isDuplicateKey(err) {
+				return false, ErrPreconditionFailed
+			}
+			return false, err
+		}
+		return true, nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
+	var current []byte
+	err = tx.QueryRowContext(ctx, selectResourceForUpdateSQL, resourceKey).Scan(&current)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, ErrPreconditionFailed
+	}
+	if err != nil {
+		return false, err
+	}
+	if !putPreconditionMatches(true, DocumentETag(current), conditions) {
+		return false, ErrPreconditionFailed
+	}
+	if _, err := tx.ExecContext(ctx, updateResourceSQL, body, resourceKey); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return false, nil
 }
 
-func (s *MariaDBStore) PutAnnotationPage(ctx context.Context, itemID, canvasID string, body []byte, ifMatch string) error {
+// Delete implements Store.
+func (s *MariaDBStore) Delete(ctx context.Context, resourceKey, ifMatch string) error {
+	if !validResourceKey(resourceKey) {
+		return ErrNotFound
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -65,64 +124,44 @@ func (s *MariaDBStore) PutAnnotationPage(ctx context.Context, itemID, canvasID s
 	defer func() {
 		_ = tx.Rollback()
 	}()
-
 	var current []byte
-	err = tx.QueryRowContext(ctx, selectAnnotationPageForUpdateSQL, itemID, canvasID).Scan(&current)
+	err = tx.QueryRowContext(ctx, selectResourceForUpdateSQL, resourceKey).Scan(&current)
 	if errors.Is(err, sql.ErrNoRows) {
-		if ifMatch != "*" {
-			return ErrPreconditionFailed
-		}
-		if _, err := tx.ExecContext(ctx, insertAnnotationPageSQL, itemID, canvasID, body); err != nil {
-			return err
-		}
-		return tx.Commit()
+		return ErrPreconditionFailed
 	}
 	if err != nil {
 		return err
 	}
-	if ifMatch == "*" || !IfMatchMatches(ifMatch, DocumentETag(current)) {
+	if !IfMatchMatches(ifMatch, DocumentETag(current)) {
 		return ErrPreconditionFailed
 	}
-	if _, err := tx.ExecContext(ctx, updateAnnotationPageSQL, body, itemID, canvasID); err != nil {
+	if _, err := tx.ExecContext(ctx, deleteResourceSQL, resourceKey); err != nil {
 		return err
 	}
 	return tx.Commit()
 }
 
-func getJSON(ctx context.Context, db *sql.DB, query string, args ...any) ([]byte, error) {
-	var body []byte
-	err := db.QueryRowContext(ctx, query, args...).Scan(&body)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrNotFound
-	}
-	if err != nil {
-		return nil, err
-	}
-	return body, nil
+func isDuplicateKey(err error) bool {
+	var mysqlErr *mysql.MySQLError
+	return errors.As(err, &mysqlErr) && mysqlErr.Number == 1062
 }
 
-//go:embed sql/schema/001_manifests.sql
-var createManifestsTableSQL string
+//go:embed sql/schema/001_resources.sql
+var createResourcesTableSQL string
 
-//go:embed sql/schema/002_annotation_pages.sql
-var createAnnotationPagesTableSQL string
+//go:embed sql/queries/select_resource.sql
+var selectResourceSQL string
 
-//go:embed sql/queries/select_manifest.sql
-var selectManifestSQL string
+//go:embed sql/queries/select_resource_for_update.sql
+var selectResourceForUpdateSQL string
 
-//go:embed sql/queries/select_annotation_page.sql
-var selectAnnotationPageSQL string
+//go:embed sql/queries/insert_resource.sql
+var insertResourceSQL string
 
-//go:embed sql/queries/insert_annotation_page.sql
-var insertAnnotationPageSQL string
+//go:embed sql/queries/update_resource.sql
+var updateResourceSQL string
 
-//go:embed sql/queries/update_annotation_page.sql
-var updateAnnotationPageSQL string
+//go:embed sql/queries/delete_resource.sql
+var deleteResourceSQL string
 
-//go:embed sql/queries/select_annotation_page_for_update.sql
-var selectAnnotationPageForUpdateSQL string
-
-var mariadbSchemaStatements = []string{
-	createManifestsTableSQL,
-	createAnnotationPagesTableSQL,
-}
+var mariadbSchemaStatements = []string{createResourcesTableSQL}

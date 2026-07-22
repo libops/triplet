@@ -6,7 +6,6 @@ results
 site
 
 deploy/compose/cache
-deploy/compose/presentation
 deploy/compose/source-cache
 
 fixtures/benchmark

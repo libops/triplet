@@ -23,7 +23,8 @@
           "id": "http://localhost:8080/presentation/v3/item-1/canvas/canvas-1/annotations",
           "type": "AnnotationPage"
         }
-      ]
+      ],
+      "items": []
     }
   ]
 }

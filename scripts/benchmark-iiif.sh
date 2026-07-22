@@ -33,6 +33,8 @@ APPEND_RUN_REPORTS="${BENCH_APPEND_RUN_REPORTS:-1}"
 
 NETWORK="triplet-bench-$RUN_ID"
 TRIPLET_CONTAINER="triplet-bench-triplet-$RUN_ID"
+BENCHMARK_TMP_DIR=""
+BENCHMARK_HELPER=""
 
 mkdir -p "$OUT_DIR/request-lines" "$OUT_DIR/logs"
 
@@ -49,6 +51,10 @@ cleanup() {
     docker rm -f "$TRIPLET_CONTAINER" >/dev/null 2>&1 || true
     docker network rm "$NETWORK" >/dev/null 2>&1 || true
   fi
+  if [ -n "$BENCHMARK_TMP_DIR" ] && [ -d "$BENCHMARK_TMP_DIR" ]; then
+    rm -f -- "$BENCHMARK_HELPER"
+    rmdir -- "$BENCHMARK_TMP_DIR"
+  fi
 }
 trap cleanup EXIT
 
@@ -59,12 +65,14 @@ require() {
   fi
 }
 
-urlencode() {
-  python3 - "$1" <<'PY'
-import sys
-from urllib.parse import quote
-print(quote(sys.argv[1], safe=""))
-PY
+prepare_benchmark_helper() {
+  BENCHMARK_TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/triplet-benchmark.XXXXXX")"
+  BENCHMARK_HELPER="$BENCHMARK_TMP_DIR/triplet-benchmark-helper"
+  (
+    cd "$ROOT_DIR"
+    go build -o "$BENCHMARK_HELPER" ./cmd/triplet-benchmark-helper
+  )
+  export BENCHMARK_HELPER
 }
 
 wait_http() {
@@ -187,32 +195,19 @@ pass="$4"
 request_name="$5"
 request_path="$6"
 
-urlencode() {
-  python3 - "$1" <<'PY'
-import sys
-from urllib.parse import quote
-print(quote(sys.argv[1], safe=""))
-PY
-}
-
 csv_escape() {
   local v="${1//\"/\"\"}"
   printf '"%s"' "$v"
 }
 
-encoded="$(urlencode "$image")"
+encoded="$("$BENCHMARK_HELPER" urlencode "$image")"
 if [ "$request_path" = "info.json" ]; then
   url="${base_url%/}/iiif/3/${encoded}/info.json"
 else
   url="${base_url%/}/iiif/3/${encoded}/${request_path}"
 fi
 
-hash="$(python3 - "$image" "$request_name" "$pass" "$server" <<'PY'
-import hashlib
-import sys
-print(hashlib.sha256("\0".join(sys.argv[1:]).encode("utf-8")).hexdigest())
-PY
-)"
+hash="$("$BENCHMARK_HELPER" hash "$image" "$request_name" "$pass" "$server")"
 line_file="$OUT_DIR/request-lines/${hash}.csv"
 
 set +e
@@ -314,216 +309,21 @@ normalize_mode() {
 
 write_matrix_summary() {
   local index="$1"
-  python3 - "$OUT_ROOT" "$RUN_ID" "$index" <<'PY'
-import csv
-import json
-import statistics
-import sys
-from pathlib import Path
-
-out_root = Path(sys.argv[1])
-run_id = sys.argv[2]
-index = Path(sys.argv[3])
-
-MODE_ORDER = {"uncached": 0, "cached": 1}
-
-def fmt_ms(value):
-    return "-" if value is None else f"{value * 1000:.1f}"
-
-def fmt_cpu_ms(value):
-    return "-" if value is None else f"{value * 1000:.2f}"
-
-def fmt_s(value):
-    return "-" if value is None else f"{value:.2f}"
-
-def fmt_rate_per_s(count, duration):
-    if not count or not duration:
-        return "-"
-    return f"{count / duration:.1f}"
-
-def fmt_size(value):
-    if value is None:
-        return "-"
-    units = ["B", "KiB", "MiB", "GiB"]
-    size = float(value)
-    unit = units[0]
-    for unit in units:
-        if abs(size) < 1024 or unit == units[-1]:
-            break
-        size /= 1024
-    return f"{size:.0f} {unit}" if unit == "B" else f"{size:.1f} {unit}"
-
-def fmt_rate(ok, total):
-    if total == 0:
-        return "-"
-    return f"{ok}/{total} ({ok / total * 100:.0f}%)"
-
-def percentile(values, pct):
-    if not values:
-        return None
-    ordered = sorted(values)
-    index = (len(ordered) - 1) * pct
-    lower = int(index)
-    upper = min(lower + 1, len(ordered) - 1)
-    if lower == upper:
-        return ordered[lower]
-    weight = index - lower
-    return ordered[lower] * (1 - weight) + ordered[upper] * weight
-
-def read_resources(path):
-    if not path.exists():
-        return {}
-    with path.open(newline="", encoding="utf-8") as fh:
-        return {row["server"]: row for row in csv.DictReader(fh)}
-
-def sort_key(row):
-    return (MODE_ORDER.get(row["mode"], 99), int(row["concurrency"]))
-
-summary_rows = []
-overall_rows = []
-triplet_images = set()
-for run_json in sorted(out_root.glob(f"{run_id}-*/run.json")):
-    run_dir = run_json.parent
-    requests_csv = run_dir / "requests.csv"
-    if not requests_csv.exists():
-        continue
-    run = json.loads(run_json.read_text(encoding="utf-8"))
-    triplet_images.add(run.get("triplet_image", "-"))
-    by_server = {}
-    with requests_csv.open(newline="", encoding="utf-8") as fh:
-        for row in csv.DictReader(fh):
-            stats = by_server.setdefault(row["server"], {"total": 0, "ok": 0, "times": [], "sizes": []})
-            stats["total"] += 1
-            if row["curl_exit"] == "0" and row["http_code"].startswith("2"):
-                stats["ok"] += 1
-                stats["times"].append(float(row["time_total"]))
-                stats["sizes"].append(int(float(row["size_download"])))
-    resources = read_resources(run_dir / "resource-summary.csv")
-    triplet = by_server.get("triplet", {"total": 0, "ok": 0, "times": [], "sizes": []})
-    triplet_times = triplet["times"]
-    duration = float(run.get("measured_duration_seconds") or 0)
-    cpu_per_request = None
-    try:
-        if triplet["ok"]:
-            mean_cpu = float(resources.get("triplet", {}).get("mean_cpu_percent", ""))
-            cpu_per_request = mean_cpu / 100 * duration / triplet["ok"]
-    except ValueError:
-        pass
-    max_mem = None
-    try:
-        max_mem = float(resources.get("triplet", {}).get("max_mem_mib", ""))
-    except ValueError:
-        pass
-    summary_rows.append({
-        "mode": run.get("mode", "-"),
-        "concurrency": str(run.get("concurrency", "-")),
-        "row": [
-            run.get("mode", "-"),
-            str(run.get("concurrency", "-")),
-            fmt_rate(triplet["ok"], triplet["total"]),
-            fmt_s(duration if duration > 0 else None),
-            fmt_rate_per_s(triplet["ok"], duration),
-            fmt_ms(percentile(triplet_times, 0.95)),
-            fmt_ms(percentile(triplet_times, 0.99)),
-            fmt_cpu_ms(cpu_per_request),
-            f"{max_mem:.1f}" if max_mem is not None else "-",
-        ],
-    })
-    for server, stats in sorted(by_server.items()):
-        times = stats["times"]
-        sizes = stats["sizes"]
-        overall_rows.append({
-            "mode": run.get("mode", "-"),
-            "concurrency": str(run.get("concurrency", "-")),
-            "server": server,
-            "row": [
-                run.get("mode", "-"),
-                str(run.get("concurrency", "-")),
-                server,
-                fmt_rate(stats["ok"], stats["total"]),
-                fmt_ms(statistics.median(times) if times else None),
-                fmt_ms(statistics.fmean(times) if times else None),
-                fmt_size(statistics.fmean(sizes) if sizes else None),
-                f"[report](../{run_dir.name}/report.md)",
-            ],
-        })
-
-if summary_rows:
-    original = index.read_text(encoding="utf-8")
-    title, _, remainder = original.partition("\n\n")
-    lines = [
-        title,
-        "",
-        "## Summary",
-        "",
-        f"Triplet image: `{', '.join(sorted(triplet_images))}`",
-        "",
-        "| Mode | Concurrency | Triplet OK | Duration s | Req/s | p95 ms | p99 ms | CPU ms/req | Max MiB |",
-        "| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |",
-    ]
-    for item in sorted(summary_rows, key=sort_key):
-        lines.append("| " + " | ".join(item["row"]) + " |")
-    lines.extend([
-        "",
-        "Status reflects Triplet request success. Performance metrics are informational.",
-        "",
-    ])
-    if remainder:
-        lines.append(remainder.rstrip())
-        lines.append("")
-    lines.extend([
-        "## Overall Summary",
-        "",
-        "| Mode | Concurrency | Server | Success | Median ms | Mean ms | Mean bytes | Report |",
-        "| --- | ---: | --- | --- | ---: | ---: | ---: | --- |",
-    ])
-    for item in sorted(overall_rows, key=lambda row: (sort_key(row), row["server"])):
-        lines.append("| " + " | ".join(item["row"]) + " |")
-    index.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
-PY
+  "$BENCHMARK_HELPER" matrix-summary "$OUT_ROOT" "$RUN_ID" "$index"
 }
 
 append_matrix_reports() {
   local index="$1"
-  python3 - "$OUT_ROOT" "$RUN_ID" "$index" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-out_root = Path(sys.argv[1])
-run_id = sys.argv[2]
-index = Path(sys.argv[3])
-
-def demote_headings(markdown):
-    lines = []
-    for line in markdown.splitlines():
-        if line.startswith("#"):
-            lines.append("#" + line)
-        else:
-            lines.append(line)
-    return "\n".join(lines).rstrip() + "\n"
-
-with index.open("a", encoding="utf-8") as out:
-    out.write("\n## Run Reports\n\n")
-    for run_json in sorted(out_root.glob(f"{run_id}-*/run.json")):
-        run_dir = run_json.parent
-        report = run_dir / "report.md"
-        if not report.exists():
-            continue
-        run = json.loads(run_json.read_text(encoding="utf-8"))
-        out.write(f"### {run_dir.name}\n\n")
-        out.write(f"- Mode: `{run.get('mode', '-')}`\n")
-        out.write(f"- Concurrency: `{run.get('concurrency', '-')}`\n")
-        out.write(f"- Directory: `{run_dir}`\n\n")
-        out.write(demote_headings(report.read_text(encoding="utf-8")))
-        out.write("\n")
-PY
+  "$BENCHMARK_HELPER" append-matrix-reports "$OUT_ROOT" "$RUN_ID" "$index"
 }
 
 main() {
   require docker
   require curl
+  require go
+  require mktemp
   require python3
+  prepare_benchmark_helper
 
   if [ "$MATRIX" = "1" ]; then
     run_matrix
@@ -586,7 +386,7 @@ EOF
 
   wait_http triplet "http://127.0.0.1:$TRIPLET_PORT/healthz" "$TRIPLET_CONTAINER"
 
-  export OUT_DIR CURL_TIMEOUT
+  export OUT_DIR CURL_TIMEOUT BENCHMARK_HELPER
   write_worker
 
   if [ "$WARMUP_PASSES" -gt 0 ]; then
@@ -614,17 +414,9 @@ EOF
   queue="$OUT_DIR/request-queue.args"
   write_queue "$queue" "$PASSES"
   measured_started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  measured_started_epoch="$(python3 - <<'PY'
-import time
-print(f"{time.time():.6f}")
-PY
-)"
+  measured_started_epoch="$("$BENCHMARK_HELPER" epoch)"
   xargs -0 -P "$CONCURRENCY" -n 6 /bin/bash "$OUT_DIR/run-one.sh" <"$queue"
-  measured_finished_epoch="$(python3 - <<'PY'
-import time
-print(f"{time.time():.6f}")
-PY
-)"
+  measured_finished_epoch="$("$BENCHMARK_HELPER" epoch)"
   measured_finished_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   if [ -n "${STATS_PID:-}" ]; then
     kill "$STATS_PID" >/dev/null 2>&1 || true
@@ -640,20 +432,12 @@ PY
     cat "$line" >>"$OUT_DIR/requests.csv"
   done
 
-  python3 - "$OUT_DIR/run.json" "$measured_started_at" "$measured_finished_at" "$measured_started_epoch" "$measured_finished_epoch" <<'PY'
-import json
-import sys
-
-path, started_at, finished_at, started, finished = sys.argv[1:]
-with open(path, encoding="utf-8") as fh:
-    run = json.load(fh)
-run["measured_started_at"] = started_at
-run["measured_finished_at"] = finished_at
-run["measured_duration_seconds"] = round(float(finished) - float(started), 6)
-with open(path, "w", encoding="utf-8") as fh:
-    json.dump(run, fh, separators=(",", ":"))
-    fh.write("\n")
-PY
+  "$BENCHMARK_HELPER" update-run \
+    "$OUT_DIR/run.json" \
+    "$measured_started_at" \
+    "$measured_finished_at" \
+    "$measured_started_epoch" \
+    "$measured_finished_epoch"
 
   python3 "$ROOT_DIR/scripts/benchmark-summary.py" "$OUT_DIR/requests.csv" "$OUT_DIR/summary.csv"
   python3 "$ROOT_DIR/scripts/benchmark-stats-summary.py" "$OUT_DIR/container-stats.jsonl" "$OUT_DIR/resource-summary.csv"

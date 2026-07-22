@@ -5,129 +5,149 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 )
 
-func TestFileStoreGetManifest(t *testing.T) {
-	root := t.TempDir()
-	itemDir := filepath.Join(root, "item-1")
-	if err := os.MkdirAll(itemDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	body := []byte(`{"@context":"http://iiif.io/api/presentation/3/context.json","id":"http://example.test/presentation/v3/item-1/manifest","type":"Manifest","label":{"en":["Item 1"]},"items":[{"id":"http://example.test/presentation/v3/item-1/canvas/1","type":"Canvas"}]}`)
-	if err := os.WriteFile(filepath.Join(itemDir, "manifest.json"), body, 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	s, err := NewFileStore(root)
+func TestFileStoreResourceLifecycle(t *testing.T) {
+	st, err := NewFileStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	got, err := s.GetManifest(context.Background(), "item-1")
+	ctx := context.Background()
+	key := "items/item-1/manifest"
+	first := []byte(`{"id":"https://example.org/manifest","type":"Manifest"}`)
+	created, err := st.Put(ctx, key, first, Preconditions{IfNoneMatch: "*"})
+	if err != nil || !created {
+		t.Fatalf("create = %v, %v", created, err)
+	}
+	document, err := st.Get(ctx, key)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(got) != string(body) {
-		t.Fatalf("body = %q", string(got))
+	if string(document.Body) != string(first) {
+		t.Fatalf("body = %q", document.Body)
+	}
+	if document.ModifiedAt.IsZero() {
+		t.Fatal("missing modification time")
+	}
+
+	if _, err := st.Put(ctx, key, first, Preconditions{IfNoneMatch: "*"}); !errors.Is(err, ErrPreconditionFailed) {
+		t.Fatalf("duplicate create err = %v", err)
+	}
+	second := []byte(`{"id":"https://example.org/manifest","type":"Manifest","summary":{"en":["updated"]}}`)
+	created, err = st.Put(ctx, key, second, Preconditions{IfMatch: DocumentETag(first)})
+	if err != nil || created {
+		t.Fatalf("update = %v, %v", created, err)
+	}
+	if _, err := st.Put(ctx, key, first, Preconditions{IfMatch: DocumentETag(first)}); !errors.Is(err, ErrPreconditionFailed) {
+		t.Fatalf("stale update err = %v", err)
+	}
+	if _, err := st.Put(ctx, key, first, Preconditions{IfMatch: "*"}); err != nil {
+		t.Fatalf("wildcard update: %v", err)
+	}
+	if err := st.Delete(ctx, key, DocumentETag(second)); !errors.Is(err, ErrPreconditionFailed) {
+		t.Fatalf("stale delete err = %v", err)
+	}
+	if err := st.Delete(ctx, key, "*"); err != nil {
+		t.Fatalf("wildcard delete: %v", err)
+	}
+	if _, err := st.Get(ctx, key); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("get deleted err = %v", err)
+	}
+	if err := st.Delete(ctx, key, "*"); !errors.Is(err, ErrPreconditionFailed) {
+		t.Fatalf("delete missing err = %v", err)
 	}
 }
 
-func TestFileStoreGetManifestNotFound(t *testing.T) {
-	s, err := NewFileStore(t.TempDir())
+func TestFileStoreMissingAndInvalidKeys(t *testing.T) {
+	st, err := NewFileStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, itemID := range []string{"missing", "../escape", "", "/abs"} {
-		t.Run(itemID, func(t *testing.T) {
-			_, err := s.GetManifest(context.Background(), itemID)
-			if !errors.Is(err, ErrNotFound) {
-				t.Fatalf("err = %v", err)
-			}
-		})
+	ctx := context.Background()
+	for _, key := range []string{"", strings.Repeat("a", MaxResourceKeyBytes+1), "bad\nkey"} {
+		if _, err := st.Get(ctx, key); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("Get(%q) err = %v", key, err)
+		}
 	}
-}
-
-func TestFileStoreAnnotationPageRoundTrip(t *testing.T) {
-	root := t.TempDir()
-	itemDir := filepath.Join(root, "item-1")
-	if err := os.MkdirAll(itemDir, 0o755); err != nil {
-		t.Fatal(err)
+	if _, err := st.Put(ctx, "missing", []byte(`{}`), Preconditions{IfMatch: "*"}); !errors.Is(err, ErrPreconditionFailed) {
+		t.Fatalf("update missing err = %v", err)
 	}
-
-	s, err := NewFileStore(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	body := []byte(`{"@context":["http://iiif.io/api/extension/text-granularity/context.json","http://iiif.io/api/presentation/3/context.json"],"id":"http://example.test/presentation/v3/item-1/canvas/canvas-1/annotations","type":"AnnotationPage","items":[{"id":"http://example.test/annotations/1","type":"Annotation","textGranularity":"line","motivation":["supplementing"],"body":{"type":"TextualBody","value":"hello"},"target":{"type":"SpecificResource","source":"http://example.test/presentation/v3/item-1/canvas/canvas-1","selector":{"type":"FragmentSelector","value":"xywh=1,2,3,4"}}}]}`)
-	if err := s.PutAnnotationPage(context.Background(), "item-1", "canvas-1", body, "*"); err != nil {
-		t.Fatal(err)
-	}
-
-	got, err := s.GetAnnotationPage(context.Background(), "item-1", "canvas-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(got) != string(body) {
-		t.Fatalf("body = %q", string(got))
+	if _, err := st.Put(ctx, "missing", []byte(`{}`), Preconditions{}); !errors.Is(err, ErrPreconditionFailed) {
+		t.Fatalf("unconditional put err = %v", err)
 	}
 }
 
 func TestFileStoreRejectsSymlinkEscape(t *testing.T) {
 	root := t.TempDir()
 	outside := t.TempDir()
-	if err := os.WriteFile(filepath.Join(outside, "manifest.json"), []byte(`{"secret":true}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(outside, filepath.Join(root, "link")); err != nil {
+	if err := os.Symlink(outside, filepath.Join(root, "resources")); err != nil {
 		t.Skipf("symlink unavailable: %v", err)
 	}
-	s, err := NewFileStore(root)
+	st, err := NewFileStore(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = s.GetManifest(context.Background(), "link")
-	if !errors.Is(err, ErrNotFound) {
-		t.Fatalf("err = %v, want ErrNotFound", err)
-	}
-	err = s.PutAnnotationPage(context.Background(), "link", "canvas-1", []byte(`{"type":"AnnotationPage","id":"x","items":[]}`), "*")
+	_, err = st.Put(context.Background(), "items/one", []byte(`{"secret":true}`), Preconditions{IfNoneMatch: "*"})
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("put err = %v, want ErrNotFound", err)
 	}
-	if _, err := os.Stat(filepath.Join(outside, "canvas")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("outside canvas dir err = %v, want not exist", err)
+	entries, err := os.ReadDir(outside)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("outside directory was modified: %v", entries)
 	}
 }
 
-func TestFileStoreAnnotationPagePreconditions(t *testing.T) {
-	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, "item-1"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	s, err := NewFileStore(root)
+func TestFileStoreConditionalCreateIsAtomic(t *testing.T) {
+	st, err := NewFileStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	first := []byte(`{"@context":"http://iiif.io/api/presentation/3/context.json","id":"http://example.test/annotations","type":"AnnotationPage","items":[]}`)
-	if err := s.PutAnnotationPage(context.Background(), "item-1", "canvas-1", first, `"missing"`); !errors.Is(err, ErrPreconditionFailed) {
-		t.Fatalf("missing exact err = %v, want ErrPreconditionFailed", err)
+	const attempts = 16
+	var wg sync.WaitGroup
+	results := make(chan error, attempts)
+	for i := 0; i < attempts; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := st.Put(context.Background(), "one/resource", []byte(`{"id":"one"}`), Preconditions{IfNoneMatch: "*"})
+			results <- err
+		}()
 	}
-	if err := s.PutAnnotationPage(context.Background(), "item-1", "canvas-1", first, "*"); err != nil {
-		t.Fatal(err)
+	wg.Wait()
+	close(results)
+	succeeded := 0
+	preconditionFailed := 0
+	for err := range results {
+		switch {
+		case err == nil:
+			succeeded++
+		case errors.Is(err, ErrPreconditionFailed):
+			preconditionFailed++
+		default:
+			t.Fatalf("unexpected create error: %v", err)
+		}
 	}
-	if err := s.PutAnnotationPage(context.Background(), "item-1", "canvas-1", first, "*"); !errors.Is(err, ErrPreconditionFailed) {
-		t.Fatalf("create existing err = %v, want ErrPreconditionFailed", err)
+	if succeeded != 1 || preconditionFailed != attempts-1 {
+		t.Fatalf("successes = %d, precondition failures = %d", succeeded, preconditionFailed)
 	}
-	second := []byte(`{"@context":"http://iiif.io/api/presentation/3/context.json","id":"http://example.test/annotations","type":"AnnotationPage","items":[{"id":"http://example.test/a","type":"Annotation"}]}`)
-	if err := s.PutAnnotationPage(context.Background(), "item-1", "canvas-1", second, DocumentETag(first)); err != nil {
-		t.Fatal(err)
+}
+
+func TestIfMatchMatches(t *testing.T) {
+	etag := `"abc"`
+	for _, header := range []string{`"abc"`, `"other", "abc"`, "*"} {
+		if !IfMatchMatches(header, etag) {
+			t.Fatalf("IfMatchMatches(%q) = false", header)
+		}
 	}
-	got, err := s.GetAnnotationPage(context.Background(), "item-1", "canvas-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(got) != string(second) {
-		t.Fatalf("body = %q", string(got))
+	for _, header := range []string{"", `W/"abc"`, `"other"`} {
+		if IfMatchMatches(header, etag) {
+			t.Fatalf("IfMatchMatches(%q) = true", header)
+		}
 	}
 }

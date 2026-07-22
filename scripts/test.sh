@@ -22,8 +22,8 @@ mkdir -p .cache/go-build .cache/go-mod
 # so integration tests run alongside unit tests. Otherwise they are skipped.
 NETWORK_ARGS=()
 ENV_ARGS=()
-DB_USER="${MARIADB_USER:-scribe}"
-DB_NAME="${MARIADB_DATABASE:-scribe}"
+DB_USER="${MARIADB_USER:-triplet}"
+DB_NAME="${MARIADB_DATABASE:-triplet}"
 
 MARIADB_ID=$(docker compose "${COMPOSE_ARGS[@]}" ps -q mariadb 2>/dev/null | head -1 || true)
 if [ -n "$MARIADB_ID" ]; then
@@ -36,7 +36,7 @@ if [ -n "$MARIADB_ID" ]; then
     if [ -f "./secrets/mariadb_password" ]; then
       DB_PASSWORD=$(tr -d '\n' < ./secrets/mariadb_password)
     else
-      DB_PASSWORD="scribe"
+      DB_PASSWORD="triplet"
     fi
     ENV_ARGS+=(-e "TEST_DSN=${DB_USER}:${DB_PASSWORD}@tcp(mariadb:3306)/${DB_NAME}?parseTime=true")
   fi

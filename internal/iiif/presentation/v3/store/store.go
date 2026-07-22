@@ -6,20 +6,38 @@ import (
 	"encoding/hex"
 	"errors"
 	"strings"
+	"time"
 )
 
-// ErrNotFound is returned when a manifest does not exist.
+const MaxResourceKeyBytes = 768
+
+// ErrNotFound is returned when a Presentation resource does not exist.
 var ErrNotFound = errors.New("presentation store: not found")
 
-// ErrPreconditionFailed is returned when a conditional write precondition does
-// not match the current stored representation.
+// ErrPreconditionFailed is returned when a conditional mutation precondition
+// does not match the current stored representation.
 var ErrPreconditionFailed = errors.New("presentation store: precondition failed")
 
-// Store reads Presentation API documents by item id.
+// Document is the byte-exact stored representation of a Presentation resource.
+type Document struct {
+	Body       []byte
+	ModifiedAt time.Time
+}
+
+// Preconditions contains the HTTP validators used for an atomic PUT.
+// Handlers require exactly one of IfMatch or IfNoneMatch.
+type Preconditions struct {
+	IfMatch     string
+	IfNoneMatch string
+}
+
+// Store persists arbitrary Presentation API resources by their normalized
+// relative public path. Application-specific identifiers and policy stay
+// outside this protocol-oriented boundary.
 type Store interface {
-	GetManifest(ctx context.Context, itemID string) ([]byte, error)
-	GetAnnotationPage(ctx context.Context, itemID, canvasID string) ([]byte, error)
-	PutAnnotationPage(ctx context.Context, itemID, canvasID string, body []byte, ifMatch string) error
+	Get(ctx context.Context, resourceKey string) (Document, error)
+	Put(ctx context.Context, resourceKey string, body []byte, conditions Preconditions) (created bool, err error)
+	Delete(ctx context.Context, resourceKey, ifMatch string) error
 }
 
 // DocumentETag returns the strong ETag used for stored Presentation documents.
@@ -28,11 +46,29 @@ func DocumentETag(body []byte) string {
 	return `"` + hex.EncodeToString(sum[:]) + `"`
 }
 
+// IfMatchMatches reports whether an If-Match field allows the current strong
+// entity tag. Weak validators never satisfy If-Match.
 func IfMatchMatches(header, etag string) bool {
+	header = strings.TrimSpace(header)
+	if header == "*" {
+		return true
+	}
 	for _, candidate := range strings.Split(header, ",") {
-		if strings.TrimSpace(candidate) == etag {
+		candidate = strings.TrimSpace(candidate)
+		if !strings.HasPrefix(candidate, "W/") && candidate == etag {
 			return true
 		}
 	}
 	return false
+}
+
+func validResourceKey(key string) bool {
+	return key != "" && len(key) <= MaxResourceKeyBytes && !strings.ContainsAny(key, "\x00\n\r")
+}
+
+func putPreconditionMatches(exists bool, currentETag string, conditions Preconditions) bool {
+	if conditions.IfNoneMatch != "" {
+		return conditions.IfMatch == "" && conditions.IfNoneMatch == "*" && !exists
+	}
+	return conditions.IfMatch != "" && exists && IfMatchMatches(conditions.IfMatch, currentETag)
 }

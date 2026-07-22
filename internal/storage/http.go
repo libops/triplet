@@ -7,12 +7,15 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/libops/triplet/internal/redact"
 )
 
 // HTTPOpener resolves identifiers as URL-encoded HTTP(S) URLs.
@@ -83,7 +86,7 @@ func (h *HTTPOpener) Open(ctx context.Context, identifier string) (io.ReadSeekCl
 
 	resp, err := h.client().Do(req)
 	if err != nil {
-		return nil, Meta{}, fmt.Errorf("http source fetch %q: %w", target.Redacted(), err)
+		return nil, Meta{}, fmt.Errorf("http source fetch %q: %w", safeTarget(target), err)
 	}
 	defer resp.Body.Close()
 
@@ -94,7 +97,7 @@ func (h *HTTPOpener) Open(ctx context.Context, identifier string) (io.ReadSeekCl
 	case http.StatusUnauthorized, http.StatusForbidden:
 		return nil, Meta{}, fmt.Errorf("%w: upstream status %d", ErrForbidden, resp.StatusCode)
 	default:
-		return nil, Meta{}, fmt.Errorf("http source %q: upstream status %d", target.Redacted(), resp.StatusCode)
+		return nil, Meta{}, fmt.Errorf("http source %q: upstream status %d", safeTarget(target), resp.StatusCode)
 	}
 
 	var reader io.Reader = resp.Body
@@ -117,7 +120,7 @@ func (h *HTTPOpener) Open(ctx context.Context, identifier string) (io.ReadSeekCl
 	}
 	if h.MaxBytes > 0 && n > h.MaxBytes {
 		cleanup()
-		return nil, Meta{}, fmt.Errorf("http source %q: response exceeds max_bytes %d", target.Redacted(), h.MaxBytes)
+		return nil, Meta{}, fmt.Errorf("http source %q: response exceeds max_bytes %d", safeTarget(target), h.MaxBytes)
 	}
 	if _, err := tmp.Seek(0, io.SeekStart); err != nil {
 		cleanup()
@@ -144,7 +147,7 @@ func (h *HTTPOpener) Meta(ctx context.Context, identifier string) (Meta, error) 
 
 	resp, err := h.client().Do(req)
 	if err != nil {
-		return Meta{}, fmt.Errorf("http source head %q: %w", target.Redacted(), err)
+		return Meta{}, fmt.Errorf("http source head %q: %w", safeTarget(target), err)
 	}
 	defer resp.Body.Close()
 	switch resp.StatusCode {
@@ -154,7 +157,7 @@ func (h *HTTPOpener) Meta(ctx context.Context, identifier string) (Meta, error) 
 			size = resp.ContentLength
 		}
 		if h.MaxBytes > 0 && size > h.MaxBytes {
-			return Meta{}, fmt.Errorf("http source %q: response exceeds max_bytes %d", target.Redacted(), h.MaxBytes)
+			return Meta{}, fmt.Errorf("http source %q: response exceeds max_bytes %d", safeTarget(target), h.MaxBytes)
 		}
 		return httpMeta(resp.Header, size), nil
 	case http.StatusMethodNotAllowed, http.StatusNotImplemented:
@@ -166,13 +169,13 @@ func (h *HTTPOpener) Meta(ctx context.Context, identifier string) (Meta, error) 
 			_ = rc.Close()
 			return meta, nil
 		}
-		return Meta{}, fmt.Errorf("http source %q: metadata unavailable", target.Redacted())
+		return Meta{}, fmt.Errorf("http source %q: metadata unavailable", safeTarget(target))
 	case http.StatusNotFound:
 		return Meta{}, fmt.Errorf("%w: upstream 404", ErrNotFound)
 	case http.StatusUnauthorized, http.StatusForbidden:
 		return Meta{}, fmt.Errorf("%w: upstream status %d", ErrForbidden, resp.StatusCode)
 	default:
-		return Meta{}, fmt.Errorf("http source %q: upstream status %d", target.Redacted(), resp.StatusCode)
+		return Meta{}, fmt.Errorf("http source %q: upstream status %d", safeTarget(target), resp.StatusCode)
 	}
 }
 
@@ -183,6 +186,9 @@ func (h *HTTPOpener) parseTarget(identifier string) (*url.URL, error) {
 	target, err := url.Parse(identifier)
 	if err != nil || (target.Scheme != "http" && target.Scheme != "https") {
 		return nil, fmt.Errorf("%w: identifier must be an http(s) URL", ErrNotFound)
+	}
+	if target.User != nil {
+		return nil, fmt.Errorf("%w: identifier must not contain URL credentials", ErrNotFound)
 	}
 	if !h.originAllowed(target) {
 		return nil, fmt.Errorf("%w: origin %q not in allow-list", ErrNotFound, urlOrigin(target))
@@ -202,7 +208,7 @@ func (h *HTTPOpener) openRange(ctx context.Context, target *url.URL) (io.ReadSee
 
 	resp, err := h.client().Do(req)
 	if err != nil {
-		return nil, Meta{}, false, fmt.Errorf("http source range fetch %q: %w", target.Redacted(), err)
+		return nil, Meta{}, false, fmt.Errorf("http source range fetch %q: %w", safeTarget(target), err)
 	}
 	defer resp.Body.Close()
 
@@ -215,14 +221,14 @@ func (h *HTTPOpener) openRange(ctx context.Context, target *url.URL) (io.ReadSee
 	case http.StatusUnauthorized, http.StatusForbidden:
 		return nil, Meta{}, true, fmt.Errorf("%w: upstream status %d", ErrForbidden, resp.StatusCode)
 	default:
-		return nil, Meta{}, true, fmt.Errorf("http source %q: upstream status %d", target.Redacted(), resp.StatusCode)
+		return nil, Meta{}, true, fmt.Errorf("http source %q: upstream status %d", safeTarget(target), resp.StatusCode)
 	}
 	size, ok := parseContentRangeSize(resp.Header.Get("Content-Range"))
 	if !ok {
 		return nil, Meta{}, false, nil
 	}
 	if h.MaxBytes > 0 && size > h.MaxBytes {
-		return nil, Meta{}, true, fmt.Errorf("http source %q: response exceeds max_bytes %d", target.Redacted(), h.MaxBytes)
+		return nil, Meta{}, true, fmt.Errorf("http source %q: response exceeds max_bytes %d", safeTarget(target), h.MaxBytes)
 	}
 	meta := Meta{
 		ContentType: resp.Header.Get("Content-Type"),
@@ -341,7 +347,21 @@ func (h *HTTPOpener) checkRedirect(req *http.Request, via []*http.Request) error
 	if !h.originAllowed(req.URL) {
 		return fmt.Errorf("%w: redirect origin %q not in allow-list", ErrNotFound, urlOrigin(req.URL))
 	}
+	if len(via) > 0 && urlOrigin(req.URL) != urlOrigin(via[0].URL) {
+		// Browser credentials are scoped to the original source origin. A
+		// redirect target must be allowlisted independently, but it must not
+		// receive the original origin's credentials.
+		req.Header.Del("Authorization")
+		req.Header.Del("Cookie")
+	}
 	return nil
+}
+
+func safeTarget(target *url.URL) string {
+	if target == nil {
+		return ""
+	}
+	return redact.Identifier(target.String())
 }
 
 func httpVersion(etag, lastModified string, size int64) string {
@@ -422,15 +442,36 @@ func urlOrigin(u *url.URL) string {
 	return strings.ToLower(u.Scheme) + "://" + strings.ToLower(u.Host)
 }
 
+var nonPublicSourcePrefixes = []netip.Prefix{
+	netip.MustParsePrefix("0.0.0.0/8"),
+	netip.MustParsePrefix("100.64.0.0/10"),
+	netip.MustParsePrefix("192.0.0.0/24"),
+	netip.MustParsePrefix("192.0.2.0/24"),
+	netip.MustParsePrefix("192.88.99.0/24"),
+	netip.MustParsePrefix("198.18.0.0/15"),
+	netip.MustParsePrefix("198.51.100.0/24"),
+	netip.MustParsePrefix("203.0.113.0/24"),
+	netip.MustParsePrefix("240.0.0.0/4"),
+	netip.MustParsePrefix("100::/64"),
+	netip.MustParsePrefix("2001:2::/48"),
+	netip.MustParsePrefix("2001:db8::/32"),
+}
+
 func privateAddressBlocked(ip net.IP) bool {
-	return ip == nil ||
-		ip.IsUnspecified() ||
-		ip.IsLoopback() ||
-		ip.IsPrivate() ||
-		ip.IsLinkLocalUnicast() ||
-		ip.IsLinkLocalMulticast() ||
-		ip.IsInterfaceLocalMulticast() ||
-		ip.IsMulticast()
+	address, ok := netip.AddrFromSlice(ip)
+	if !ok {
+		return true
+	}
+	address = address.Unmap()
+	if !address.IsGlobalUnicast() || address.IsPrivate() || address.IsLoopback() || address.IsLinkLocalUnicast() || address.IsMulticast() || address.IsUnspecified() {
+		return true
+	}
+	for _, prefix := range nonPublicSourcePrefixes {
+		if prefix.Contains(address) {
+			return true
+		}
+	}
+	return false
 }
 
 // seekableBytes is a tiny io.ReadSeeker over a []byte without pulling in

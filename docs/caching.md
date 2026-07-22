@@ -103,6 +103,12 @@ cache:
 When `source_stale_after` is set, stale hits are served immediately and refreshed
 in the background. Upstream 4xx/5xx responses are not stored.
 
+The source cache cannot be enabled with
+`sources.http.forward_auth_headers: true`. Authorization and cookie values are
+intentionally not cache-key material, so sharing cached source bytes between
+credentialed requests could disclose a protected source. Triplet rejects this
+combination during configuration validation.
+
 ## HTTP metadata cache
 
 Remote URL identifiers need source metadata to build derivative cache keys. By
@@ -120,6 +126,11 @@ This is an explicit staleness window. While metadata is cached, a derivative
 cache hit can be served without touching the remote source. If the remote source
 changes, disappears, or changes authorization during the TTL, Triplet may serve
 the cached derivative until the metadata entry expires.
+
+The metadata cache likewise cannot be enabled when
+`sources.http.forward_auth_headers` is true. With forwarding enabled, Triplet
+reauthorizes every image request against its exact-allowlisted source origin
+before it can serve a derivative cache hit.
 
 ## Authorization decision cache
 
@@ -165,8 +176,8 @@ derivative and source caches.
 | Layer | Configuration | What is cached | Invalidation / freshness |
 |---|---|---|---|
 | Derivative cache | `cache.root`; optional `cache.max_bytes`, `cache.max_age`, `iiif.image.cache_invalidation_token` | Encoded IIIF image responses, keyed by identifier, source version, invalidation marker, region, size, rotation, quality, and format. | A changed source version produces a new key. The protected invalidation route bumps the per-identifier invalidation marker. `cache.max_bytes` is a best-effort aggregate cache budget reported by `triplet-cache-cleanup`; `cache.max_age` is enforced on reads and by `triplet-cache-cleanup`. `iiif.image.max_derivative_bytes` is the per-response size limit before return/cache. Failed transforms and HTTP error responses are not stored. |
-| HTTP source cache | `cache.source_root`; optional `cache.source_max_bytes`, `cache.source_stale_after` | Original source bytes fetched through the HTTP source backend. | Keys are source identifiers. When `source_stale_after` is set, stale hits are served immediately and refreshed in the background. Upstream 4xx/5xx responses are not stored. |
-| HTTP metadata cache | `sources.http.metadata_cache_ttl` | Successful remote source metadata lookups for URL identifiers. | In-memory only. While fresh, derivative cache checks can avoid upstream metadata requests. This can serve stale derivatives until the TTL expires. |
+| HTTP source cache | `cache.source_root`; optional `cache.source_max_bytes`, `cache.source_stale_after` | Original source bytes fetched through the HTTP source backend. | Keys are source identifiers. When `source_stale_after` is set, stale hits are served immediately and refreshed in the background. Upstream 4xx/5xx responses are not stored. Incompatible with `sources.http.forward_auth_headers`. |
+| HTTP metadata cache | `sources.http.metadata_cache_ttl` | Successful remote source metadata lookups for URL identifiers. | In-memory only. While fresh, derivative cache checks can avoid upstream metadata requests. This can serve stale derivatives until the TTL expires. Incompatible with `sources.http.forward_auth_headers`. |
 | `info.json` dimension cache | `iiif.image.info_dimension_cache` | Source dimensions used to build Image API `info.json`. | In-memory only. Entries are keyed by identifier plus source size/modtime metadata, so source changes with updated metadata miss the cache. |
 | Local URL auth-probe cache | `sources.http.metadata_cache_ttl` for mappings with `auth_probe: true` | Authorization probe results for local URL mappings. Anonymous and credentialed probes are cached separately. See [Authorization](authorization.md). | In-memory only. The image cache invalidation route also clears matching auth-probe entries when the source backend supports it. |
 | libvips operation cache | `vips.cache_max_mem`, `vips.cache_max_files` | libvips in-process operation results. | Disabled by default in the example config. This is process-local and separate from Triplet's derivative/source caches. |

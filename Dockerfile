@@ -14,7 +14,7 @@ ARG \
     # renovate: datasource=repology depName=debian_13/ca-certificates
     CA_CERTIFICATES_VERSION=20250419 \
     # renovate: datasource=repology depName=debian_13/curl
-    CURL_VERSION=8.14.1-2+deb13u3 \
+    CURL_VERSION=8.14.1-2+deb13u4 \
     # renovate: datasource=repology depName=debian_13/libcgif-dev
     LIBCGIF_DEV_VERSION=0.5.0-1 \
     # renovate: datasource=repology depName=debian_13/libexpat1-dev
@@ -34,7 +34,7 @@ ARG \
     # renovate: datasource=repology depName=debian_13/libspng-dev
     LIBSPNG_DEV_VERSION=0.7.4-2 \
     # renovate: datasource=repology depName=debian_13/libtiff-dev
-    LIBTIFF_DEV_VERSION=4.7.0-3+deb13u2 \
+    LIBTIFF_DEV_VERSION=4.7.0-3+deb13u3 \
     # renovate: datasource=repology depName=debian_13/libwebp-dev
     LIBWEBP_DEV_VERSION=1.5.0-0.1 \
     # renovate: datasource=repology depName=debian_13/meson
@@ -170,13 +170,13 @@ ARG \
     # renovate: datasource=repology depName=debian_13/liblcms2-2
     LIBLCMS2_2_VERSION=2.16-2+deb13u2 \
     # renovate: datasource=repology depName=debian_13/libopenjp2-7
-    LIBOPENJP2_7_VERSION=2.5.3-2.1~deb13u1 \
+    LIBOPENJP2_7_VERSION=2.5.3-2.1~deb13u2 \
     # renovate: datasource=repology depName=debian_13/libpng16-16t64
     LIBPNG16_16T64_VERSION=1.6.48-1+deb13u5 \
     # renovate: datasource=repology depName=debian_13/libspng0
     LIBSPNG0_VERSION=0.7.4-2 \
     # renovate: datasource=repology depName=debian_13/libtiff6
-    LIBTIFF6_VERSION=4.7.0-3+deb13u2 \
+    LIBTIFF6_VERSION=4.7.0-3+deb13u3 \
     # renovate: datasource=repology depName=debian_13/libwebp7
     LIBWEBP7_VERSION=1.5.0-0.1 \
     # renovate: datasource=repology depName=debian_13/libwebpdemux2
@@ -218,9 +218,11 @@ RUN rm -rf \
   && useradd --system --gid triplet --uid 100 --home-dir /nonexistent --shell /usr/sbin/nologin triplet
 
 WORKDIR /var/lib/triplet
-RUN mkdir -p /var/lib/triplet/cache /var/lib/triplet/testdata/images \
+RUN mkdir -p /var/lib/triplet/cache /var/lib/triplet/presentation \
+    /var/lib/triplet/source-cache /var/lib/triplet/testdata/images \
   && chown -R triplet:triplet /var/lib/triplet
 COPY --chown=triplet:triplet deploy/compose/images/ /var/lib/triplet/testdata/images/
+COPY --chown=triplet:triplet deploy/compose/presentation/ /var/lib/triplet/presentation/
 
 COPY --from=build /out/triplet /usr/local/bin/triplet
 COPY --from=build /out/triplet-healthcheck /usr/local/bin/triplet-healthcheck

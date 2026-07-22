@@ -73,6 +73,18 @@ sources:
 			wantErr: "server.public_base_url",
 		},
 		{
+			name: "public_base_url credentials rejected",
+			body: `
+server:
+  public_base_url: https://user:secret@example.org/iiif
+sources:
+  default: file
+  file:
+    root: /tmp
+`,
+			wantErr: "server.public_base_url",
+		},
+		{
 			name: "unknown source",
 			body: `
 server:
@@ -97,6 +109,59 @@ sources:
     max_bytes: 1048576
     metadata_cache_ttl: 24h
 `,
+		},
+		{
+			name: "http source auth forwarding valid",
+			body: `
+server:
+  public_base_url: http://localhost:8080
+sources:
+  default: http
+  http:
+    allowed_origins: [https://repository.example.org]
+    forward_auth_headers: true
+`,
+		},
+		{
+			name: "http source origin rejects URL credentials",
+			body: `
+server:
+  public_base_url: http://localhost:8080
+sources:
+  default: http
+  http:
+    allowed_origins: [https://user:secret@repository.example.org]
+`,
+			wantErr: "absolute http(s) origin",
+		},
+		{
+			name: "http auth forwarding rejects shared metadata cache",
+			body: `
+server:
+  public_base_url: http://localhost:8080
+sources:
+  default: http
+  http:
+    allowed_origins: [https://repository.example.org]
+    forward_auth_headers: true
+    metadata_cache_ttl: 5m
+`,
+			wantErr: "metadata_cache_ttl must be 0",
+		},
+		{
+			name: "http auth forwarding rejects shared source cache",
+			body: `
+server:
+  public_base_url: http://localhost:8080
+sources:
+  default: http
+  http:
+    allowed_origins: [https://repository.example.org]
+    forward_auth_headers: true
+cache:
+  source_root: /tmp/source-cache
+`,
+			wantErr: "cache.source_root must be empty",
 		},
 		{
 			name: "file url prefixes valid",
@@ -341,7 +406,7 @@ iiif:
   presentation:
     enabled: true
     root: /tmp
-    dsn: scribe:scribe@tcp(mariadb:3306)/scribe?parseTime=true
+    dsn: triplet:triplet@tcp(mariadb:3306)/triplet?parseTime=true
 sources:
   default: file
   file:
@@ -575,6 +640,25 @@ sources:
 	}
 	if c.Vips.BlockUntrusted == nil || !*c.Vips.BlockUntrusted {
 		t.Errorf("Vips.BlockUntrusted default = %#v", c.Vips.BlockUntrusted)
+	}
+}
+
+func TestLoadHTTPForwardAuthHeaders(t *testing.T) {
+	path := writeConfig(t, `
+server:
+  public_base_url: http://localhost:8080
+sources:
+  default: http
+  http:
+    allowed_origins: [https://repository.example.org]
+    forward_auth_headers: true
+`)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Sources.HTTP == nil || !cfg.Sources.HTTP.ForwardAuthHeaders {
+		t.Fatalf("HTTP source = %#v", cfg.Sources.HTTP)
 	}
 }
 

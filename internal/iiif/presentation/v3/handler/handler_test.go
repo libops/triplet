@@ -1,13 +1,13 @@
 package handler
 
 import (
-	"encoding/json"
+	"bytes"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -15,355 +15,508 @@ import (
 	pstore "github.com/libops/triplet/internal/iiif/presentation/v3/store"
 )
 
-func setupTestServer(t *testing.T) *httptest.Server {
-	t.Helper()
-	return setupTestServerWithWrites(t, false, "")
+const (
+	testPrefix     = "/presentation/v3"
+	testPublicBase = "https://iiif.example.org"
+	testWriteToken = "test-token"
+)
+
+type presentationTestServer struct {
+	server *httptest.Server
+	store  *pstore.FileStore
 }
 
-func setupTestServerWithWrites(t *testing.T, writeEnabled bool, writeToken string) *httptest.Server {
+func newPresentationTestServer(t *testing.T, writeEnabled bool, allowedOrigins []string, seed map[string][]byte) presentationTestServer {
 	t.Helper()
-	return setupTestServerWithWritesAndCORS(t, writeEnabled, writeToken, nil)
-}
-
-func setupTestServerWithWritesAndCORS(t *testing.T, writeEnabled bool, writeToken string, allowedOrigins []string) *httptest.Server {
-	t.Helper()
-	root := t.TempDir()
-	itemDir := filepath.Join(root, "item-1")
-	if err := os.MkdirAll(itemDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	body := `{"@context":"http://iiif.io/api/presentation/3/context.json","id":"http://example.test/presentation/v3/item-1/manifest","type":"Manifest","label":{"en":["Item 1"]},"items":[{"id":"http://example.test/presentation/v3/item-1/canvas/1","type":"Canvas"}]}`
-	if err := os.WriteFile(filepath.Join(itemDir, "manifest.json"), []byte(body), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	annoDir := filepath.Join(itemDir, "canvas", "canvas-1")
-	if err := os.MkdirAll(annoDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	anno := `{"@context":["http://iiif.io/api/extension/text-granularity/context.json","http://iiif.io/api/presentation/3/context.json"],"id":"http://example.test/presentation/v3/item-1/canvas/canvas-1/annotations","type":"AnnotationPage","items":[{"id":"http://example.test/annotations/1","type":"Annotation","textGranularity":"line","motivation":["supplementing"],"body":{"type":"TextualBody","value":"hello"},"target":{"type":"SpecificResource","source":"http://example.test/presentation/v3/item-1/canvas/canvas-1","selector":{"type":"FragmentSelector","value":"xywh=1,2,3,4"}}}]}`
-	if err := os.WriteFile(filepath.Join(annoDir, "annotations.json"), []byte(anno), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	st, err := pstore.NewFileStore(root)
+	st, err := pstore.NewFileStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
+	}
+	for key, body := range seed {
+		if _, err := st.Put(t.Context(), key, body, pstore.Preconditions{IfNoneMatch: "*"}); err != nil {
+			t.Fatalf("seed %q: %v", key, err)
+		}
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	h := New("/presentation/v3", st, cors.New(allowedOrigins, "ETag"), writeEnabled, writeToken, logger)
+	h := New(
+		testPrefix,
+		testPublicBase,
+		st,
+		cors.New(allowedOrigins, "ETag, Last-Modified, Content-Length, Location"),
+		writeEnabled,
+		testWriteToken,
+		logger,
+	)
 	mux := http.NewServeMux()
 	h.Register(mux)
-	return httptest.NewServer(mux)
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return presentationTestServer{server: srv, store: st}
 }
 
-func TestManifest(t *testing.T) {
-	srv := setupTestServer(t)
-	defer srv.Close()
-	resp, err := http.Get(srv.URL + "/presentation/v3/item-1/manifest")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d", resp.StatusCode)
-	}
-	if got := resp.Header.Get("Access-Control-Allow-Origin"); got != "" {
-		t.Fatalf("CORS = %q", got)
-	}
-	if got := resp.Header.Get("Content-Type"); got == "" {
-		t.Fatal("missing content-type")
-	}
+func publicID(key string) string {
+	return testPublicBase + testPrefix + "/" + key
 }
 
-func TestManifestPutMethodNotAllowed(t *testing.T) {
-	srv := setupTestServerWithWrites(t, true, "test-token")
-	defer srv.Close()
-	req, err := http.NewRequest(http.MethodPut, srv.URL+"/presentation/v3/item-1/manifest", strings.NewReader(`{}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	req.Header.Set("Authorization", "Bearer test-token")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusMethodNotAllowed {
-		t.Fatalf("status = %d", resp.StatusCode)
-	}
+func manifestBody(key string) []byte {
+	return []byte(fmt.Sprintf(`{"@context":"http://iiif.io/api/presentation/3/context.json","id":%q,"type":"Manifest","label":{"en":["Manifest"]},"items":[]}`, publicID(key)))
 }
 
-func TestAnnotationPageGet(t *testing.T) {
-	srv := setupTestServer(t)
-	defer srv.Close()
-	resp, err := http.Get(srv.URL + "/presentation/v3/item-1/canvas/canvas-1/annotations")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d", resp.StatusCode)
-	}
+func canvasBody(key string) []byte {
+	return []byte(fmt.Sprintf(`{"@context":"http://iiif.io/api/presentation/3/context.json","id":%q,"type":"Canvas","width":100,"height":200,"items":[]}`, publicID(key)))
 }
 
-func TestAnnotationPageHead(t *testing.T) {
-	srv := setupTestServer(t)
-	defer srv.Close()
-	req, err := http.NewRequest(http.MethodHead, srv.URL+"/presentation/v3/item-1/canvas/canvas-1/annotations", nil)
+func annotationPageBody(key, value string) []byte {
+	return []byte(fmt.Sprintf(`{"@context":["http://iiif.io/api/extension/text-granularity/context.json","http://iiif.io/api/presentation/3/context.json"],"id":%q,"type":"AnnotationPage","items":[{"id":%q,"type":"Annotation","motivation":"supplementing","body":{"type":"TextualBody","value":%q},"target":"https://iiif.example.org/canvas/1#xywh=1,2,3,4","textGranularity":"line"}]}`, publicID(key), publicID(key+"/items/1"), value))
+}
+
+func annotationBody(key string) []byte {
+	return []byte(fmt.Sprintf(`{"@context":["http://iiif.io/api/extension/text-granularity/context.json","http://iiif.io/api/presentation/3/context.json"],"id":%q,"type":"Annotation","target":"https://iiif.example.org/canvas/1","textGranularity":"token"}`, publicID(key)))
+}
+
+func collectionBody(key string) []byte {
+	return []byte(fmt.Sprintf(`{"@context":"http://iiif.io/api/presentation/3/context.json","id":%q,"type":"Collection","label":{"en":["Collection"]},"items":[]}`, publicID(key)))
+}
+
+func annotationCollectionBody(key string) []byte {
+	return []byte(fmt.Sprintf(`{"@context":"http://iiif.io/api/presentation/3/context.json","id":%q,"type":"AnnotationCollection"}`, publicID(key)))
+}
+
+func authorizedPUT(t *testing.T, endpoint string, body []byte, ifMatch, ifNoneMatch string) *http.Response {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPut, endpoint, bytes.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+testWriteToken)
+	req.Header.Set("Content-Type", "application/ld+json")
+	if ifMatch != "" {
+		req.Header.Set("If-Match", ifMatch)
+	}
+	if ifNoneMatch != "" {
+		req.Header.Set("If-None-Match", ifNoneMatch)
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d", resp.StatusCode)
-	}
-	b, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(b) != 0 {
-		t.Fatalf("expected empty body, got %q", string(b))
-	}
+	return resp
 }
 
-func TestAnnotationPageCORSExposesETag(t *testing.T) {
-	srv := setupTestServerWithWritesAndCORS(t, true, "test-token", []string{"https://editor.example.edu"})
-	defer srv.Close()
-	req, err := http.NewRequest(http.MethodGet, srv.URL+"/presentation/v3/item-1/canvas/canvas-1/annotations", nil)
+func TestResourceGetHeadAndConditionalRequests(t *testing.T) {
+	key := "items/item-1/manifest"
+	body := manifestBody(key)
+	testServer := newPresentationTestServer(t, false, []string{"https://viewer.example.org"}, map[string][]byte{key: body})
+	endpoint := testServer.server.URL + testPrefix + "/" + key
+
+	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	req.Header.Set("Origin", "https://editor.example.edu")
+	req.Header.Set("Origin", "https://viewer.example.org")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
-	if got := resp.Header.Get("Access-Control-Allow-Origin"); got != "https://editor.example.edu" {
+	got, err := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusOK || !bytes.Equal(got, body) {
+		t.Fatalf("GET status/body = %d, %q", resp.StatusCode, got)
+	}
+	if got := resp.Header.Get("Content-Type"); got != documentMediaType {
+		t.Fatalf("Content-Type = %q", got)
+	}
+	if got := resp.Header.Get("Content-Length"); got != strconv.Itoa(len(body)) {
+		t.Fatalf("Content-Length = %q", got)
+	}
+	etag := resp.Header.Get("ETag")
+	lastModified := resp.Header.Get("Last-Modified")
+	if etag == "" || lastModified == "" {
+		t.Fatalf("missing validators: ETag=%q Last-Modified=%q", etag, lastModified)
+	}
+	if got := resp.Header.Get("Access-Control-Allow-Origin"); got != "https://viewer.example.org" {
 		t.Fatalf("Access-Control-Allow-Origin = %q", got)
 	}
-	if got := resp.Header.Get("Access-Control-Expose-Headers"); got != "ETag" {
+	if got := resp.Header.Get("Access-Control-Expose-Headers"); got != "ETag, Last-Modified, Content-Length, Location" {
 		t.Fatalf("Access-Control-Expose-Headers = %q", got)
 	}
-	if got := resp.Header.Get("ETag"); got == "" {
-		t.Fatal("missing ETag")
+
+	headReq, _ := http.NewRequest(http.MethodHead, endpoint, nil)
+	headResp, err := http.DefaultClient.Do(headReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	headBody, _ := io.ReadAll(headResp.Body)
+	_ = headResp.Body.Close()
+	if headResp.StatusCode != http.StatusOK || len(headBody) != 0 || headResp.Header.Get("Content-Length") != strconv.Itoa(len(body)) {
+		t.Fatalf("HEAD status/body/length = %d, %q, %q", headResp.StatusCode, headBody, headResp.Header.Get("Content-Length"))
+	}
+
+	for name, header := range map[string]string{"strong ETag": etag, "weak ETag": "W/" + etag} {
+		t.Run(name, func(t *testing.T) {
+			req, _ := http.NewRequest(http.MethodGet, endpoint, nil)
+			req.Header.Set("If-None-Match", header)
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = resp.Body.Close()
+			if resp.StatusCode != http.StatusNotModified {
+				t.Fatalf("status = %d", resp.StatusCode)
+			}
+		})
+	}
+	modifiedReq, _ := http.NewRequest(http.MethodGet, endpoint, nil)
+	modifiedReq.Header.Set("If-Modified-Since", lastModified)
+	modifiedResp, err := http.DefaultClient.Do(modifiedReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = modifiedResp.Body.Close()
+	if modifiedResp.StatusCode != http.StatusNotModified {
+		t.Fatalf("If-Modified-Since status = %d", modifiedResp.StatusCode)
 	}
 }
 
-func TestAnnotationPagePut(t *testing.T) {
-	srv := setupTestServerWithWrites(t, true, "test-token")
-	defer srv.Close()
-	body := `{"@context":["http://iiif.io/api/extension/text-granularity/context.json","http://iiif.io/api/presentation/3/context.json"],"id":"http://example.test/presentation/v3/item-1/canvas/canvas-2/annotations","type":"AnnotationPage","items":[{"id":"http://example.test/annotations/2","type":"Annotation","textGranularity":"line","motivation":["supplementing"],"body":{"type":"TextualBody","value":"world"},"target":{"type":"SpecificResource","source":"http://example.test/presentation/v3/item-1/canvas/canvas-2","selector":{"type":"FragmentSelector","value":"xywh=5,6,7,8"}}}]}`
-	req, err := http.NewRequest(http.MethodPut, srv.URL+"/presentation/v3/item-1/canvas/canvas-2/annotations", strings.NewReader(body))
-	if err != nil {
-		t.Fatal(err)
+func TestConditionalPutSupportsGenericResourceTypes(t *testing.T) {
+	testServer := newPresentationTestServer(t, true, nil, nil)
+	tests := []struct {
+		name string
+		key  string
+		body []byte
+	}{
+		{name: "manifest", key: "items/1/manifest"},
+		{name: "canvas", key: "items/1/canvas/1"},
+		{name: "annotation page", key: "items/1/canvas/1/annotations"},
+		{name: "annotation", key: "items/1/canvas/1/annotations/items/1"},
+		{name: "collection", key: "collections/1"},
+		{name: "annotation collection", key: "annotation-collections/1"},
 	}
-	req.Header.Set("Content-Type", "application/ld+json")
-	req.Header.Set("Authorization", "Bearer test-token")
-	req.Header.Set("If-Match", "*")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusNoContent {
-		t.Fatalf("status = %d", resp.StatusCode)
-	}
+	tests[0].body = manifestBody(tests[0].key)
+	tests[1].body = canvasBody(tests[1].key)
+	tests[2].body = annotationPageBody(tests[2].key, "hello")
+	tests[3].body = annotationBody(tests[3].key)
+	tests[4].body = collectionBody(tests[4].key)
+	tests[5].body = annotationCollectionBody(tests[5].key)
 
-	getResp, err := http.Get(srv.URL + "/presentation/v3/item-1/canvas/canvas-2/annotations")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer getResp.Body.Close()
-	if getResp.StatusCode != http.StatusOK {
-		t.Fatalf("get status = %d", getResp.StatusCode)
-	}
-	if getResp.Header.Get("ETag") == "" {
-		t.Fatal("GET response missing ETag")
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			endpoint := testServer.server.URL + testPrefix + "/" + test.key
+			resp := authorizedPUT(t, endpoint, test.body, "", "*")
+			_ = resp.Body.Close()
+			if resp.StatusCode != http.StatusCreated {
+				t.Fatalf("PUT status = %d", resp.StatusCode)
+			}
+			if got := resp.Header.Get("Location"); got != publicID(test.key) {
+				t.Fatalf("Location = %q", got)
+			}
+			getResp, err := http.Get(endpoint)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, _ := io.ReadAll(getResp.Body)
+			_ = getResp.Body.Close()
+			if getResp.StatusCode != http.StatusOK || !bytes.Equal(got, test.body) {
+				t.Fatalf("GET status/body = %d, %q", getResp.StatusCode, got)
+			}
+		})
 	}
 }
 
-func TestAnnotationPagePutRequiresIfMatch(t *testing.T) {
-	srv := setupTestServerWithWrites(t, true, "test-token")
-	defer srv.Close()
-	body := `{"@context":["http://iiif.io/api/extension/text-granularity/context.json","http://iiif.io/api/presentation/3/context.json"],"id":"http://example.test/presentation/v3/item-1/canvas/canvas-2/annotations","type":"AnnotationPage","items":[]}`
-	req, err := http.NewRequest(http.MethodPut, srv.URL+"/presentation/v3/item-1/canvas/canvas-2/annotations", strings.NewReader(body))
+func TestReplaceAndDeleteUseStrongPreconditions(t *testing.T) {
+	key := "items/1/canvas/1/annotations"
+	first := annotationPageBody(key, "first")
+	testServer := newPresentationTestServer(t, true, nil, map[string][]byte{key: first})
+	endpoint := testServer.server.URL + testPrefix + "/" + key
+	getResp, err := http.Get(endpoint)
 	if err != nil {
 		t.Fatal(err)
 	}
-	req.Header.Set("Authorization", "Bearer test-token")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusPreconditionRequired {
-		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusPreconditionRequired)
-	}
-}
-
-func TestAnnotationPagePutHonorsIfMatch(t *testing.T) {
-	srv := setupTestServerWithWrites(t, true, "test-token")
-	defer srv.Close()
-	url := srv.URL + "/presentation/v3/item-1/canvas/canvas-1/annotations"
-	getResp, err := http.Get(url)
-	if err != nil {
-		t.Fatal(err)
-	}
-	etag := getResp.Header.Get("ETag")
+	firstETag := getResp.Header.Get("ETag")
 	_ = getResp.Body.Close()
-	if etag == "" {
-		t.Fatal("GET response missing ETag")
+
+	second := annotationPageBody(key, "second")
+	updateResp := authorizedPUT(t, endpoint, second, firstETag, "")
+	_ = updateResp.Body.Close()
+	if updateResp.StatusCode != http.StatusNoContent {
+		t.Fatalf("update status = %d", updateResp.StatusCode)
+	}
+	secondETag := updateResp.Header.Get("ETag")
+	if secondETag == "" || secondETag == firstETag {
+		t.Fatalf("updated ETag = %q", secondETag)
+	}
+	staleResp := authorizedPUT(t, endpoint, first, firstETag, "")
+	_ = staleResp.Body.Close()
+	if staleResp.StatusCode != http.StatusPreconditionFailed {
+		t.Fatalf("stale PUT status = %d", staleResp.StatusCode)
 	}
 
-	body := `{"@context":["http://iiif.io/api/extension/text-granularity/context.json","http://iiif.io/api/presentation/3/context.json"],"id":"http://example.test/presentation/v3/item-1/canvas/canvas-1/annotations","type":"AnnotationPage","items":[{"id":"http://example.test/annotations/3","type":"Annotation","textGranularity":"line","motivation":["supplementing"],"body":{"type":"TextualBody","value":"updated"},"target":{"type":"SpecificResource","source":"http://example.test/presentation/v3/item-1/canvas/canvas-1","selector":{"type":"FragmentSelector","value":"xywh=5,6,7,8"}}}]}`
-	req, err := http.NewRequest(http.MethodPut, url, strings.NewReader(body))
+	deleteReq, _ := http.NewRequest(http.MethodDelete, endpoint, nil)
+	deleteReq.Header.Set("Authorization", "Bearer "+testWriteToken)
+	deleteReq.Header.Set("If-Match", firstETag)
+	deleteResp, err := http.DefaultClient.Do(deleteReq)
 	if err != nil {
 		t.Fatal(err)
 	}
-	req.Header.Set("Content-Type", "application/ld+json")
-	req.Header.Set("Authorization", "Bearer test-token")
-	req.Header.Set("If-Match", etag)
+	_ = deleteResp.Body.Close()
+	if deleteResp.StatusCode != http.StatusPreconditionFailed {
+		t.Fatalf("stale DELETE status = %d", deleteResp.StatusCode)
+	}
+
+	deleteReq, _ = http.NewRequest(http.MethodDelete, endpoint, nil)
+	deleteReq.Header.Set("Authorization", "Bearer "+testWriteToken)
+	deleteReq.Header.Set("If-Match", secondETag)
+	deleteResp, err = http.DefaultClient.Do(deleteReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = deleteResp.Body.Close()
+	if deleteResp.StatusCode != http.StatusNoContent {
+		t.Fatalf("matched DELETE status = %d", deleteResp.StatusCode)
+	}
+	missingResp, err := http.Get(endpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = missingResp.Body.Close()
+	if missingResp.StatusCode != http.StatusNotFound {
+		t.Fatalf("deleted GET status = %d", missingResp.StatusCode)
+	}
+}
+
+func TestPutPreconditionContract(t *testing.T) {
+	existingKey := "items/1/manifest"
+	existingBody := manifestBody(existingKey)
+	testServer := newPresentationTestServer(t, true, nil, map[string][]byte{existingKey: existingBody})
+	tests := []struct {
+		name        string
+		key         string
+		ifMatch     string
+		ifNoneMatch string
+		want        int
+	}{
+		{name: "condition required", key: "items/2/manifest", want: http.StatusPreconditionRequired},
+		{name: "create existing", key: existingKey, ifNoneMatch: "*", want: http.StatusPreconditionFailed},
+		{name: "replace missing wildcard", key: "items/2/manifest", ifMatch: "*", want: http.StatusPreconditionFailed},
+		{name: "both conditions", key: "items/2/manifest", ifMatch: "*", ifNoneMatch: "*", want: http.StatusBadRequest},
+		{name: "non wildcard If-None-Match", key: "items/2/manifest", ifNoneMatch: `"etag"`, want: http.StatusBadRequest},
+		{name: "weak If-Match", key: existingKey, ifMatch: `W/"etag"`, want: http.StatusBadRequest},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			resp := authorizedPUT(t, testServer.server.URL+testPrefix+"/"+test.key, manifestBody(test.key), test.ifMatch, test.ifNoneMatch)
+			_ = resp.Body.Close()
+			if resp.StatusCode != test.want {
+				t.Fatalf("status = %d, want %d", resp.StatusCode, test.want)
+			}
+		})
+	}
+}
+
+func TestWriteAuthenticationMediaTypeValidationAndLimit(t *testing.T) {
+	testServer := newPresentationTestServer(t, true, nil, nil)
+	key := "items/1/manifest"
+	endpoint := testServer.server.URL + testPrefix + "/" + key
+	body := manifestBody(key)
+
+	unauthorized, _ := http.NewRequest(http.MethodPut, endpoint, bytes.NewReader(body))
+	unauthorized.Header.Set("Content-Type", "application/json")
+	unauthorized.Header.Set("If-None-Match", "*")
+	resp, err := http.DefaultClient.Do(unauthorized)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized || resp.Header.Get("WWW-Authenticate") == "" {
+		t.Fatalf("unauthorized response = %d, %q", resp.StatusCode, resp.Header.Get("WWW-Authenticate"))
+	}
+
+	badMedia, _ := http.NewRequest(http.MethodPut, endpoint, bytes.NewReader(body))
+	badMedia.Header.Set("Authorization", "Bearer "+testWriteToken)
+	badMedia.Header.Set("Content-Type", "text/plain")
+	badMedia.Header.Set("If-None-Match", "*")
+	resp, err = http.DefaultClient.Do(badMedia)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusUnsupportedMediaType {
+		t.Fatalf("bad media status = %d", resp.StatusCode)
+	}
+
+	tooLarge, _ := http.NewRequest(http.MethodPut, endpoint, strings.NewReader(strings.Repeat("x", maxWriteBodyBytes+1)))
+	tooLarge.Header.Set("Authorization", "Bearer "+testWriteToken)
+	tooLarge.Header.Set("Content-Type", "application/json")
+	tooLarge.Header.Set("If-None-Match", "*")
+	resp, err = http.DefaultClient.Do(tooLarge)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("large body status = %d", resp.StatusCode)
+	}
+}
+
+func TestPutRejectsInvalidResourceAndIDMismatch(t *testing.T) {
+	testServer := newPresentationTestServer(t, true, nil, nil)
+	key := "items/1/manifest"
+	endpoint := testServer.server.URL + testPrefix + "/" + key
+	tests := []struct {
+		name string
+		body []byte
+		want int
+	}{
+		{name: "malformed", body: []byte(`{`), want: http.StatusBadRequest},
+		{name: "unsupported type", body: []byte(fmt.Sprintf(`{"@context":"http://iiif.io/api/presentation/3/context.json","id":%q,"type":"Sequence","items":[]}`, publicID(key))), want: http.StatusBadRequest},
+		{name: "ID mismatch", body: manifestBody("other/manifest"), want: http.StatusConflict},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			resp := authorizedPUT(t, endpoint, test.body, "", "*")
+			_ = resp.Body.Close()
+			if resp.StatusCode != test.want {
+				t.Fatalf("status = %d, want %d", resp.StatusCode, test.want)
+			}
+		})
+	}
+}
+
+func TestDeleteContract(t *testing.T) {
+	key := "items/1/manifest"
+	testServer := newPresentationTestServer(t, true, nil, map[string][]byte{key: manifestBody(key)})
+	endpoint := testServer.server.URL + testPrefix + "/" + key
+
+	req, _ := http.NewRequest(http.MethodDelete, endpoint, nil)
+	req.Header.Set("Authorization", "Bearer "+testWriteToken)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusPreconditionRequired {
+		t.Fatalf("missing If-Match status = %d", resp.StatusCode)
+	}
+
+	req, _ = http.NewRequest(http.MethodDelete, endpoint, nil)
+	req.Header.Set("Authorization", "Bearer "+testWriteToken)
+	req.Header.Set("If-Match", "*")
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("wildcard delete status = %d", resp.StatusCode)
+	}
+
+	req, _ = http.NewRequest(http.MethodDelete, endpoint, nil)
+	req.Header.Set("Authorization", "Bearer "+testWriteToken)
+	req.Header.Set("If-Match", "*")
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusPreconditionFailed {
+		t.Fatalf("missing delete status = %d", resp.StatusCode)
+	}
+}
+
+func TestCORSOptionsAndMethodAllow(t *testing.T) {
+	testServer := newPresentationTestServer(t, true, []string{"https://editor.example.org"}, nil)
+	endpoint := testServer.server.URL + testPrefix + "/items/1/manifest"
+	req, _ := http.NewRequest(http.MethodOptions, endpoint, nil)
+	req.Header.Set("Origin", "https://editor.example.org")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
 	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusNoContent {
-		t.Fatalf("matched PUT status = %d", resp.StatusCode)
+		t.Fatalf("OPTIONS status = %d", resp.StatusCode)
+	}
+	if got := resp.Header.Get("Access-Control-Allow-Methods"); got != "GET, HEAD, PUT, DELETE, OPTIONS" {
+		t.Fatalf("Access-Control-Allow-Methods = %q", got)
+	}
+	if got := resp.Header.Get("Access-Control-Allow-Headers"); got != "Authorization, Content-Type, If-Match, If-None-Match" {
+		t.Fatalf("Access-Control-Allow-Headers = %q", got)
 	}
 
-	req, err = http.NewRequest(http.MethodPut, url, strings.NewReader(body))
+	patchReq, _ := http.NewRequest(http.MethodPatch, endpoint, nil)
+	patchResp, err := http.DefaultClient.Do(patchReq)
 	if err != nil {
 		t.Fatal(err)
 	}
-	req.Header.Set("Content-Type", "application/ld+json")
-	req.Header.Set("Authorization", "Bearer test-token")
-	req.Header.Set("If-Match", etag)
-	resp, err = http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusPreconditionFailed {
-		t.Fatalf("stale PUT status = %d, want %d", resp.StatusCode, http.StatusPreconditionFailed)
+	_ = patchResp.Body.Close()
+	if patchResp.StatusCode != http.StatusMethodNotAllowed || !strings.Contains(patchResp.Header.Get("Allow"), "DELETE") {
+		t.Fatalf("PATCH response = %d, Allow %q", patchResp.StatusCode, patchResp.Header.Get("Allow"))
 	}
 }
 
-func TestAnnotationPagePutDisabled(t *testing.T) {
-	srv := setupTestServer(t)
-	defer srv.Close()
-	req, err := http.NewRequest(http.MethodPut, srv.URL+"/presentation/v3/item-1/canvas/canvas-2/annotations", strings.NewReader(`{}`))
+func TestRejectsNonCanonicalAndQueryResourcePaths(t *testing.T) {
+	testServer := newPresentationTestServer(t, false, nil, nil)
+	for _, rawURL := range []string{
+		testServer.server.URL + testPrefix + "/items/%69tem/manifest",
+		testServer.server.URL + testPrefix + "/items/item%2Fmanifest",
+		testServer.server.URL + testPrefix + "/items/item/manifest?view=1",
+	} {
+		req, err := http.NewRequest(http.MethodGet, rawURL, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("GET %q status = %d", rawURL, resp.StatusCode)
+		}
+	}
+}
+
+func TestInvalidStoredResourcesFailClosed(t *testing.T) {
+	tests := []struct {
+		name string
+		body []byte
+	}{
+		{name: "invalid JSON", body: []byte(`{`)},
+		{name: "mismatched ID", body: manifestBody("other/manifest")},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			key := "items/1/manifest"
+			testServer := newPresentationTestServer(t, false, nil, map[string][]byte{key: test.body})
+			resp, err := http.Get(testServer.server.URL + testPrefix + "/" + key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = resp.Body.Close()
+			if resp.StatusCode != http.StatusInternalServerError {
+				t.Fatalf("status = %d", resp.StatusCode)
+			}
+		})
+	}
+}
+
+func TestNotFoundAndWritesDisabled(t *testing.T) {
+	testServer := newPresentationTestServer(t, false, nil, nil)
+	endpoint := testServer.server.URL + testPrefix + "/items/1/manifest"
+	resp, err := http.Get(endpoint)
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("GET status = %d", resp.StatusCode)
 	}
-	defer resp.Body.Close()
+	resp = authorizedPUT(t, endpoint, manifestBody("items/1/manifest"), "", "*")
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusMethodNotAllowed {
-		t.Fatalf("status = %d", resp.StatusCode)
-	}
-}
-
-func TestAnnotationPagePutRequiresBearerToken(t *testing.T) {
-	srv := setupTestServerWithWrites(t, true, "test-token")
-	defer srv.Close()
-	req, err := http.NewRequest(http.MethodPut, srv.URL+"/presentation/v3/item-1/canvas/canvas-2/annotations", strings.NewReader(`{}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("status = %d", resp.StatusCode)
-	}
-}
-
-func TestAnnotationPagePutValidationError(t *testing.T) {
-	srv := setupTestServerWithWrites(t, true, "test-token")
-	defer srv.Close()
-	req, err := http.NewRequest(http.MethodPut, srv.URL+"/presentation/v3/item-1/canvas/canvas-2/annotations", strings.NewReader(`{"type":"AnnotationPage"}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	req.Header.Set("Authorization", "Bearer test-token")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("status = %d", resp.StatusCode)
-	}
-	var got map[string]string
-	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
-		t.Fatalf("decode error response: %v", err)
-	}
-	if got["error"] == "" {
-		t.Fatal("missing error message")
-	}
-}
-
-func TestRejectsOverlongIDs(t *testing.T) {
-	srv := setupTestServerWithWrites(t, true, "test-token")
-	defer srv.Close()
-	tooLong := strings.Repeat("a", 256)
-
-	resp, err := http.Get(srv.URL + "/presentation/v3/" + tooLong + "/manifest")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("manifest status = %d", resp.StatusCode)
-	}
-
-	body := `{"@context":["http://iiif.io/api/presentation/3/context.json"],"id":"http://example.test/annotations","type":"AnnotationPage","items":[]}`
-	req, err := http.NewRequest(http.MethodPut, srv.URL+"/presentation/v3/item-1/canvas/"+tooLong+"/annotations", strings.NewReader(body))
-	if err != nil {
-		t.Fatal(err)
-	}
-	req.Header.Set("Authorization", "Bearer test-token")
-	resp, err = http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("annotation status = %d", resp.StatusCode)
-	}
-}
-
-func TestManifestNotFound(t *testing.T) {
-	srv := setupTestServer(t)
-	defer srv.Close()
-	resp, err := http.Get(srv.URL + "/presentation/v3/missing/manifest")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusNotFound {
-		t.Fatalf("status = %d", resp.StatusCode)
-	}
-}
-
-func TestAnnotationPageNotFound(t *testing.T) {
-	srv := setupTestServer(t)
-	defer srv.Close()
-	resp, err := http.Get(srv.URL + "/presentation/v3/item-1/canvas/missing/annotations")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusNotFound {
-		t.Fatalf("status = %d", resp.StatusCode)
+		t.Fatalf("disabled PUT status = %d", resp.StatusCode)
 	}
 }
