@@ -1,13 +1,13 @@
-# syntax=docker/dockerfile:1.25@sha256:0adf442eae370b6087e08edc7c50b552d80ddf261576f4ebd6421006b2461f12
+# syntax=docker/dockerfile:1.26@sha256:ecfaec9ed6d810b56388c508f4121597bfbba70d41a6dfeee4d8cad5f295fc32
 
-FROM debian:trixie-20260610@sha256:fe7312b5f05bf5f43fad76bcd8945642e4e47a68aefd1b73f447615899d0fac1 AS vips-build
+FROM debian:13@sha256:fac46bff2e02f51425b6e33b0e1169f55dfb053d83511ca28aa50c09fd5ed7a4 AS vips-build
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 ARG TARGETARCH
 
 # renovate: datasource=github-releases depName=libvips packageName=libvips/libvips
-ARG VIPS_VERSION=8.18.3
+ARG VIPS_VERSION=8.18.4
 ARG \
     # renovate: datasource=repology depName=debian_13/build-essential
     BUILD_ESSENTIAL_VERSION=12.12 \
@@ -18,7 +18,7 @@ ARG \
     # renovate: datasource=repology depName=debian_13/libcgif-dev
     LIBCGIF_DEV_VERSION=0.5.0-1 \
     # renovate: datasource=repology depName=debian_13/libexpat1-dev
-    LIBEXPAT1_DEV_VERSION=2.7.1-2 \
+    LIBEXPAT1_DEV_VERSION=2.8.2-1~deb13u1 \
     # renovate: datasource=repology depName=debian_13/libglib2.0-dev
     LIBGLIB2_0_DEV_VERSION=2.84.4-3~deb13u3 \
     # renovate: datasource=repology depName=debian_13/libimagequant-dev
@@ -120,7 +120,7 @@ RUN curl -fsSL -o vips.tar.xz "https://github.com/libvips/libvips/releases/downl
   && rm -rf /tmp/vips*
 
 FROM vips-build AS base
-COPY --from=golang:1.26-bookworm@sha256:5f68ec6805843bd3981a951ffada82a26a0bd2631045c8f7dba483fa868f5ec5 /usr/local/go /usr/local/go
+COPY --from=golang:1.26-bookworm@sha256:1ecb7edf62a0408027bd5729dfd6b1b8766e578e8df93995b225dfd0944eb651 /usr/local/go /usr/local/go
 
 WORKDIR /src
 ENV PATH=/usr/local/go/bin:$PATH
@@ -147,7 +147,7 @@ FROM base AS test-runner
 WORKDIR /app
 ENTRYPOINT ["/bin/bash"]
 
-FROM debian:trixie-20260610@sha256:fe7312b5f05bf5f43fad76bcd8945642e4e47a68aefd1b73f447615899d0fac1 AS runtime
+FROM debian:13@sha256:fac46bff2e02f51425b6e33b0e1169f55dfb053d83511ca28aa50c09fd5ed7a4 AS runtime
 
 ENV LD_LIBRARY_PATH=/usr/local/lib/x86_64-linux-gnu:/usr/local/lib
 ENV TRIPLET_PUBLIC_BASE_URL=http://localhost:8080
