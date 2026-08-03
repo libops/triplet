@@ -12,7 +12,7 @@ jobs:
   lint-test:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
@@ -21,7 +21,7 @@ jobs:
           cache-dependency-path: go.sum
 
       - name: Cache Go tool binaries
-        uses: actions/cache@2c8a9bd7457de244a408f35966fab2fb45fda9c8 # v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~/go/bin
           key: ${{ runner.os }}-go-bin-${{ hashFiles('go.sum', 'Makefile') }}
@@ -29,7 +29,7 @@ jobs:
             ${{ runner.os }}-go-bin-
 
       - name: Cache container Go test state
-        uses: actions/cache@2c8a9bd7457de244a408f35966fab2fb45fda9c8 # v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             .cache/go-build
@@ -44,7 +44,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends libvips-dev pkg-config
 
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@1e7e51e771db61008b38414a730f564565cf7c20 # v9
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9
         with:
           version: latest
           install-only: true
@@ -53,10 +53,10 @@ jobs:
         run: make lint
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
 
       - name: Build cached test runner
-        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
           file: ./Dockerfile
@@ -78,7 +78,7 @@ jobs:
 
   push-images:
     needs: [ lint-test ]
-    uses: libops/.github/.github/workflows/build-push.yaml@f39fff4fbd5096221d705143e88e5942f5d9a604 # main
+    uses: libops/.github/.github/workflows/build-push.yaml@92a70c027cfe2553a8bc4adaba67a3e620ff6958 # main
     permissions:
       contents: read
       packages: write
@@ -91,7 +91,7 @@ jobs:
       contents: read
       packages: read
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set branch image tag
         shell: bash
@@ -101,7 +101,7 @@ jobs:
           echo "GIT_BRANCH=$tag" >> "$GITHUB_ENV"
 
       - name: Cache container Go test state
-        uses: actions/cache@2c8a9bd7457de244a408f35966fab2fb45fda9c8 # v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             .cache/go-build
@@ -111,7 +111,7 @@ jobs:
             ${{ runner.os }}-container-go-
 
       - name: Cache IIIF validator
-        uses: actions/cache@2c8a9bd7457de244a408f35966fab2fb45fda9c8 # v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: .cache/iiif-validator
           key: ${{ runner.os }}-iiif-validator-${{ hashFiles('scripts/ensure-iiif-validator.sh') }}
@@ -124,10 +124,10 @@ jobs:
           sudo apt-get install -y --no-install-recommends libmagic1 python3-venv
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
 
       - name: Build cached test runner
-        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
           file: ./Dockerfile
@@ -159,7 +159,7 @@ jobs:
       packages: read
       pull-requests: write
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Find open PR
         id: find_pr
