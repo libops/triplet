@@ -18,7 +18,7 @@ ARG \
     # renovate: datasource=repology depName=debian_13/libcgif-dev
     LIBCGIF_DEV_VERSION=0.5.0-1 \
     # renovate: datasource=repology depName=debian_13/libexpat1-dev
-    LIBEXPAT1_DEV_VERSION=2.7.1-2 \
+    LIBEXPAT1_DEV_VERSION=2.8.2-1~deb13u1 \
     # renovate: datasource=repology depName=debian_13/libglib2.0-dev
     LIBGLIB2_0_DEV_VERSION=2.84.4-3~deb13u3 \
     # renovate: datasource=repology depName=debian_13/libimagequant-dev
