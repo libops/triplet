@@ -78,7 +78,7 @@ jobs:
 
   push-images:
     needs: [ lint-test ]
-    uses: libops/.github/.github/workflows/build-push.yaml@92a70c027cfe2553a8bc4adaba67a3e620ff6958 # main
+    uses: libops/.github/.github/workflows/build-push.yaml@ac5db178c5335b456c20f28aa9f447d93c572aa9 # main
     permissions:
       contents: read
       packages: write
