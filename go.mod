@@ -4,7 +4,7 @@ go 1.26.2
 
 require (
 	github.com/davidbyttow/govips/v2 v2.18.0
-	github.com/go-sql-driver/mysql v1.10.0
+	github.com/go-sql-driver/mysql v1.10.1
 	github.com/libops/iiif-spec v0.3.0
 	github.com/prometheus/client_golang v1.24.1
 	gopkg.in/yaml.v3 v3.0.1
