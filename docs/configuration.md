@@ -154,6 +154,7 @@ iiif:
     max_concurrent_transforms: 4
     color_management: preserve
     load_access: auto
+    background_color: "#ffffff"
 ```
 
 `max_concurrent_transforms` bounds concurrent libvips jobs across image
@@ -177,6 +178,15 @@ files:
 | `auto` | Default. Uses random access for region crops and sequential access for full-image or resize requests. | Best production default for mixed IIIF viewer traffic. |
 | `sequential` | Streams source pixels forward. | Useful for profiling whole-image derivatives or source formats where sequential reads are materially cheaper. Poor fit for tile-heavy crop workloads. |
 | `random` | Allows libvips to seek around the source. | Useful for profiling tile and region workloads. Can do unnecessary work for simple full-image derivatives. |
+
+`background_color` sets the color used for transparent source pixels and for the
+corners of arbitrary rotations when the response format cannot store
+transparency (`jpg` and `pdf`). It accepts `#rgb`, `#rrggbb`, or a CSS color
+name such as `white`, and serves the same purpose as Cantaloupe's
+`processor.background_color`. When omitted, those areas are black. Quote hex
+values, because YAML treats an unquoted `#` as the start of a comment. Other
+formats keep their alpha channel. Derivative cache keys do not include this
+setting, so clear or invalidate cached derivatives after changing it.
 
 ## Advertised image limits
 
