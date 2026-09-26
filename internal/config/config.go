@@ -97,6 +97,7 @@ type Image struct {
 	MaxHeight                        int      `yaml:"max_height"`
 	ColorManagement                  string   `yaml:"color_management"`
 	LoadAccess                       string   `yaml:"load_access"`
+	BackgroundColor                  *Color   `yaml:"background_color"`
 	InfoDimensionCache               *bool    `yaml:"info_dimension_cache"`
 }
 

@@ -71,6 +71,9 @@ type Options struct {
 	ColorManagement string
 	// LoadAccess is "auto", "sequential", or "random". Empty means "auto".
 	LoadAccess string
+	// BackgroundColor fills transparent pixels and rotation corners in JPEG and
+	// PDF output. Nil means black.
+	BackgroundColor *color.RGBA
 }
 
 // New constructs a pipeline backed by src.
@@ -186,13 +189,21 @@ func (p *Pipeline) Transform(ctx context.Context, req parse.Request, w io.Writer
 		}
 	}
 
+	// Flatten before rotation, which cannot fill gray+alpha images, and before
+	// quality, so gray and bitonal output stay gray and bitonal.
+	if background := p.opaqueBackground(req.Format); background != nil {
+		if err := flattenAlpha(img, *background); err != nil {
+			return Result{}, err
+		}
+	}
+
 	if req.Rotation.Mirror {
 		if err := img.Flip(gv.DirectionHorizontal); err != nil {
 			return Result{}, tvips.Wrap("govips flip", err)
 		}
 	}
 	if req.Rotation.Degrees != 0 {
-		if err := rotate(img, req.Rotation.Degrees); err != nil {
+		if err := rotate(img, req.Rotation.Degrees, p.opaqueBackground(req.Format)); err != nil {
 			return Result{}, err
 		}
 	}
@@ -343,7 +354,7 @@ func normalizeColorSpace(img *gv.ImageRef) error {
 	}
 }
 
-func rotate(img *gv.ImageRef, degrees float64) error {
+func rotate(img *gv.ImageRef, degrees float64, background *color.RGBA) error {
 	switch degrees {
 	case 90:
 		return tvips.Wrap("govips rotate", img.Rotate(gv.Angle90))
@@ -352,8 +363,39 @@ func rotate(img *gv.ImageRef, degrees float64) error {
 	case 270:
 		return tvips.Wrap("govips rotate", img.Rotate(gv.Angle270))
 	default:
-		return tvips.Wrap("govips similarity rotate", img.Similarity(1, degrees, &gv.ColorRGBA{A: 255}, 0, 0, 0, 0))
+		fill := &gv.ColorRGBA{A: 255}
+		if background != nil {
+			fill.R, fill.G, fill.B = background.R, background.G, background.B
+		}
+		return tvips.Wrap("govips similarity rotate", img.Similarity(1, degrees, fill, 0, 0, 0, 0))
 	}
+}
+
+// opaqueBackground returns the configured background for formats without an
+// alpha channel, or nil to keep the existing black fill.
+func (p *Pipeline) opaqueBackground(format parse.Format) *color.RGBA {
+	if format != parse.FormatJPG && format != parse.FormatPDF {
+		return nil
+	}
+	return p.options.BackgroundColor
+}
+
+func flattenAlpha(img *gv.ImageRef, background color.RGBA) error {
+	if !img.HasAlpha() {
+		return nil
+	}
+	gray := img.Bands() == 2
+	// govips flattens with an 8-bit RGB background, so convert gray and 16-bit images first.
+	if err := img.ToColorSpace(gv.InterpretationSRGB); err != nil {
+		return tvips.Wrap("govips colourspace srgb", err)
+	}
+	if err := img.Flatten(&gv.Color{R: background.R, G: background.G, B: background.B}); err != nil {
+		return tvips.Wrap("govips flatten", err)
+	}
+	if gray && background.R == background.G && background.G == background.B {
+		return tvips.Wrap("govips colourspace b-w", img.ToColorSpace(gv.InterpretationBW))
+	}
+	return nil
 }
 
 func applyQuality(img *gv.ImageRef, q parse.Quality) (*gv.ImageRef, error) {
