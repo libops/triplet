@@ -1,20 +1,20 @@
-# syntax=docker/dockerfile:1.26@sha256:ecfaec9ed6d810b56388c508f4121597bfbba70d41a6dfeee4d8cad5f295fc32
+# syntax=docker/dockerfile:1.27@sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e
 
-FROM debian:13@sha256:34cd9e9fd437c0a095ec39cb2e73422c9f30821b0d0848ed74fd0d43bae4d958 AS vips-build
+FROM debian:13@sha256:9cc080028c43b27d2074d63a5f9caf7166d731494965616c1a6d2827a004585c AS vips-build
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 ARG TARGETARCH
 
 # renovate: datasource=github-releases depName=libvips packageName=libvips/libvips
-ARG VIPS_VERSION=8.18.5
+ARG VIPS_VERSION=8.18.7
 ARG \
     # renovate: datasource=repology depName=debian_13/build-essential
     BUILD_ESSENTIAL_VERSION=12.12 \
     # renovate: datasource=repology depName=debian_13/ca-certificates
     CA_CERTIFICATES_VERSION=20250419 \
     # renovate: datasource=repology depName=debian_13/curl
-    CURL_VERSION=8.14.1-2+deb13u4 \
+    CURL_VERSION=8.14.1-2+deb13u5 \
     # renovate: datasource=repology depName=debian_13/libcgif-dev
     LIBCGIF_DEV_VERSION=0.5.0-1 \
     # renovate: datasource=repology depName=debian_13/libexpat1-dev
@@ -120,7 +120,7 @@ RUN curl -fsSL -o vips.tar.xz "https://github.com/libvips/libvips/releases/downl
   && rm -rf /tmp/vips*
 
 FROM vips-build AS base
-COPY --from=golang:1.27-bookworm@sha256:484ef6066fa69acb059fdfeda7ba2b8f7391f2ef6abc6f9b8411e669ebd56466 /usr/local/go /usr/local/go
+COPY --from=golang:1.27-bookworm@sha256:69a7b9788769bec032d238959b61854e9ae87f57be9029ec04e9885fabf99195 /usr/local/go /usr/local/go
 
 WORKDIR /src
 ENV PATH=/usr/local/go/bin:$PATH
@@ -147,7 +147,7 @@ FROM base AS test-runner
 WORKDIR /app
 ENTRYPOINT ["/bin/bash"]
 
-FROM debian:13@sha256:34cd9e9fd437c0a095ec39cb2e73422c9f30821b0d0848ed74fd0d43bae4d958 AS runtime
+FROM debian:13@sha256:9cc080028c43b27d2074d63a5f9caf7166d731494965616c1a6d2827a004585c AS runtime
 
 ENV LD_LIBRARY_PATH=/usr/local/lib/x86_64-linux-gnu:/usr/local/lib
 ENV TRIPLET_PUBLIC_BASE_URL=http://localhost:8080
