@@ -59,20 +59,20 @@ sources:
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	if got := c.IIIF.Image.BackgroundColor; got == nil || *got != (Color{255, 255, 255, 255}) {
-		t.Fatalf("BackgroundColor = %v", got)
+	if got := c.IIIF.Image.Background(); got == nil || *got != (color.RGBA{255, 255, 255, 255}) {
+		t.Fatalf("Background() = %v", got)
 	}
 
 	c, err = Load(writeConfig(t, body(`    enabled: true`)))
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	if c.IIIF.Image.BackgroundColor != nil {
-		t.Fatalf("BackgroundColor default = %v, want nil", c.IIIF.Image.BackgroundColor)
+	if got := c.IIIF.Image.Background(); got != nil {
+		t.Fatalf("Background() default = %v, want nil", got)
 	}
 
 	_, err = Load(writeConfig(t, body(`    background_color: transparent`)))
-	if err == nil || !strings.Contains(err.Error(), "transparent") {
-		t.Fatalf("err = %v, want invalid color error", err)
+	if err == nil || !strings.Contains(err.Error(), `iiif.image.background_color: "transparent"`) {
+		t.Fatalf("err = %v, want error naming the key and value", err)
 	}
 }

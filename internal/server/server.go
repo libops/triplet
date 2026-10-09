@@ -7,7 +7,6 @@ import (
 	"crypto/subtle"
 	"errors"
 	"fmt"
-	"image/color"
 	"log/slog"
 	"net"
 	"net/http"
@@ -83,7 +82,7 @@ func Build(cfg *config.Config, logger *slog.Logger) (*http.Server, error) {
 		}, pipeline.Options{
 			ColorManagement: cfg.IIIF.Image.ColorManagement,
 			LoadAccess:      cfg.IIIF.Image.LoadAccess,
-			BackgroundColor: (*color.RGBA)(cfg.IIIF.Image.BackgroundColor),
+			BackgroundColor: cfg.IIIF.Image.Background(),
 		})
 		derivCache, err := buildDerivativeCache(cfg)
 		if err != nil {

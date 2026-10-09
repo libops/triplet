@@ -154,7 +154,7 @@ iiif:
     max_concurrent_transforms: 4
     color_management: preserve
     load_access: auto
-    background_color: "#ffffff"
+    background_color: "#ffffff"   # default: unset (black)
 ```
 
 `max_concurrent_transforms` bounds concurrent libvips jobs across image
@@ -184,7 +184,9 @@ corners of arbitrary rotations when the response format cannot store
 transparency (`jpg` and `pdf`). It accepts `#rgb`, `#rrggbb`, or a CSS color
 name such as `white`, and serves the same purpose as Cantaloupe's
 `processor.background_color`. When omitted, those areas are black. Quote hex
-values, because YAML treats an unquoted `#` as the start of a comment. Other
+values, because YAML treats an unquoted `#` as the start of a comment. This
+also applies to environment variables, which are substituted before parsing:
+write `background_color: "${BG}"`, not `background_color: ${BG}`. Other
 formats keep their alpha channel. Derivative cache keys do not include this
 setting, so clear or invalidate cached derivatives after changing it.
 

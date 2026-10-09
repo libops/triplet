@@ -7,22 +7,19 @@ import (
 	"strings"
 
 	"golang.org/x/image/colornames"
-	"gopkg.in/yaml.v3"
 )
 
-// Color is an opaque RGB color written as #rgb, #rrggbb, or a CSS color name.
-type Color color.RGBA
-
-func (c *Color) UnmarshalYAML(node *yaml.Node) error {
-	if node.Kind != yaml.ScalarNode {
-		return fmt.Errorf("color must be a scalar")
+// Background returns the parsed background_color, or nil when it is unset.
+// Load rejects invalid values, so a loaded config never yields nil for a set one.
+func (i Image) Background() *color.RGBA {
+	if i.BackgroundColor == "" {
+		return nil
 	}
-	rgba, err := parseColor(node.Value)
+	c, err := parseColor(i.BackgroundColor)
 	if err != nil {
-		return err
+		return nil
 	}
-	*c = Color(rgba)
-	return nil
+	return &c
 }
 
 func parseColor(raw string) (color.RGBA, error) {
@@ -36,7 +33,7 @@ func parseColor(raw string) (color.RGBA, error) {
 	}
 	b, err := hex.DecodeString(digits)
 	if !ok || err != nil || len(b) != 3 {
-		return color.RGBA{}, fmt.Errorf("color %q must be #rgb, #rrggbb, or a CSS color name", raw)
+		return color.RGBA{}, fmt.Errorf("%q is not #rgb, #rrggbb, or a CSS color name", raw)
 	}
 	return color.RGBA{R: b[0], G: b[1], B: b[2], A: 255}, nil
 }

@@ -326,6 +326,72 @@ func TestTransformArbitraryRotationFillsJPEGCorners(t *testing.T) {
 	assertNearRGB(t, img.At(0, 0), 255, 255, 255)
 }
 
+func TestTransformArbitraryRotationFillsGrayJPEGCorners(t *testing.T) {
+	tests := []struct {
+		name       string
+		background color.RGBA
+		wantGray   bool
+	}{
+		{name: "neutral", background: color.RGBA{128, 128, 128, 255}, wantGray: true},
+		{name: "non-neutral", background: color.RGBA{255, 0, 0, 255}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			p := newTestPipelineWithOptions(t, Options{BackgroundColor: &tc.background})
+			img := transformJPEG(t, p, "gray.png/full/max/45/default.jpg")
+			if _, gray := img.(*image.Gray); gray != tc.wantGray {
+				t.Fatalf("decoded %T, want gray = %v", img, tc.wantGray)
+			}
+			assertNearRGB(t, img.At(0, 0), tc.background.R, tc.background.G, tc.background.B)
+		})
+	}
+}
+
+func TestTransformArbitraryRotationFillsCMYKJPEGCorners(t *testing.T) {
+	root := t.TempDir()
+	writeSamplePNG(t, filepath.Join(root, "sample.png"))
+	writeCMYKTIFF(t, filepath.Join(root, "sample.png"), filepath.Join(root, "cmyk.tif"))
+	op, err := storage.NewFileOpener(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := New(op, Limits{}, Options{BackgroundColor: &color.RGBA{255, 255, 255, 255}})
+	img := transformJPEG(t, p, "cmyk.tif/full/max/45/default.jpg")
+	assertNearRGB(t, img.At(0, 0), 255, 255, 255)
+}
+
+func TestTransformFlattenDropsCMYKProfile(t *testing.T) {
+	root := t.TempDir()
+	writeTransparentPNG(t, filepath.Join(root, "transparent.png"))
+	writeCMYKTIFF(t, filepath.Join(root, "transparent.png"), filepath.Join(root, "cmyk-alpha.tif"))
+	op, err := storage.NewFileOpener(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := New(op, Limits{}, Options{ColorManagement: "preserve", BackgroundColor: &color.RGBA{255, 255, 255, 255}})
+
+	var buf bytes.Buffer
+	if _, err := p.Transform(context.Background(), mustParseImageRequest(t, "cmyk-alpha.tif/full/max/0/default.jpg"), &buf); err != nil {
+		t.Fatalf("transform: %v", err)
+	}
+	out, err := gv.LoadImageFromBuffer(buf.Bytes(), nil)
+	if err != nil {
+		t.Fatalf("load output: %v", err)
+	}
+	defer out.Close()
+	if out.Interpretation() == gv.InterpretationCMYK {
+		t.Fatal("output is still CMYK")
+	}
+	if icc := out.GetICCProfile(); len(icc) >= 20 && string(icc[16:20]) == "CMYK" {
+		t.Fatal("output embeds the source CMYK profile")
+	}
+	img, err := jpeg.Decode(bytes.NewReader(buf.Bytes()))
+	if err != nil {
+		t.Fatalf("decode jpeg: %v", err)
+	}
+	assertNearRGB(t, img.At(150, 50), 255, 255, 255)
+}
+
 func TestChooseJP2Page(t *testing.T) {
 	tests := []struct {
 		name             string
@@ -474,6 +540,7 @@ func newTestPipelineWithOptions(t *testing.T, opts Options) *Pipeline {
 	writeSamplePNG(t, filepath.Join(root, "sample.png"))
 	writeTransparentPNG(t, filepath.Join(root, "transparent.png"))
 	writeGrayAlphaPNG(t, filepath.Join(root, "transparent.png"), filepath.Join(root, "gray-alpha.png"))
+	writeGrayPNG(t, filepath.Join(root, "gray.png"))
 	op, err := storage.NewFileOpener(root)
 	if err != nil {
 		t.Fatal(err)
@@ -497,6 +564,46 @@ func writeTransparentPNG(t *testing.T, path string) {
 	}
 	defer f.Close()
 	if err := png.Encode(f, img); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeGrayPNG(t *testing.T, path string) {
+	t.Helper()
+	img := image.NewGray(image.Rect(0, 0, 200, 100))
+	for i := range img.Pix {
+		img.Pix[i] = 100
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if err := png.Encode(f, img); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// writeCMYKTIFF writes a CMYK copy of src with an embedded CMYK profile,
+// keeping any alpha band.
+func writeCMYKTIFF(t *testing.T, src, dst string) {
+	t.Helper()
+	img, err := gv.LoadImageFromFile(src, nil)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	defer img.Close()
+	if err := img.ToColorSpace(gv.InterpretationCMYK); err != nil {
+		t.Skipf("libvips CMYK conversion unavailable: %v", err)
+	}
+	if !img.HasICCProfile() {
+		t.Fatal("fixture has no CMYK profile")
+	}
+	out, _, err := img.ExportTiff(gv.NewTiffExportParams())
+	if err != nil {
+		t.Fatalf("export tiff: %v", err)
+	}
+	if err := os.WriteFile(dst, out, 0o600); err != nil {
 		t.Fatal(err)
 	}
 }

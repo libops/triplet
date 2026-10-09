@@ -97,7 +97,7 @@ type Image struct {
 	MaxHeight                        int      `yaml:"max_height"`
 	ColorManagement                  string   `yaml:"color_management"`
 	LoadAccess                       string   `yaml:"load_access"`
-	BackgroundColor                  *Color   `yaml:"background_color"`
+	BackgroundColor                  string   `yaml:"background_color"`
 	InfoDimensionCache               *bool    `yaml:"info_dimension_cache"`
 }
 
@@ -432,6 +432,11 @@ func (c *Config) validate() error {
 	case "auto", "sequential", "random":
 	default:
 		return fmt.Errorf("iiif.image.load_access: %q not one of auto|sequential|random", c.IIIF.Image.LoadAccess)
+	}
+	if c.IIIF.Image.BackgroundColor != "" {
+		if _, err := parseColor(c.IIIF.Image.BackgroundColor); err != nil {
+			return fmt.Errorf("iiif.image.background_color: %w", err)
+		}
 	}
 	if c.Cache.MaxBytes < 0 {
 		return errors.New("cache.max_bytes: must be >= 0")
