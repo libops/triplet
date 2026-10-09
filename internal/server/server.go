@@ -82,6 +82,7 @@ func Build(cfg *config.Config, logger *slog.Logger) (*http.Server, error) {
 		}, pipeline.Options{
 			ColorManagement: cfg.IIIF.Image.ColorManagement,
 			LoadAccess:      cfg.IIIF.Image.LoadAccess,
+			BackgroundColor: cfg.IIIF.Image.Background(),
 		})
 		derivCache, err := buildDerivativeCache(cfg)
 		if err != nil {

@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -97,6 +98,7 @@ type Image struct {
 	MaxHeight                        int      `yaml:"max_height"`
 	ColorManagement                  string   `yaml:"color_management"`
 	LoadAccess                       string   `yaml:"load_access"`
+	BackgroundColor                  string   `yaml:"background_color"`
 	InfoDimensionCache               *bool    `yaml:"info_dimension_cache"`
 }
 
@@ -189,6 +191,13 @@ func Load(path string) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse config %q: %w", path, err)
 	}
+	unquotedBackground, err := unquotedHexColorYAMLField([]byte(expanded), "iiif", "image", "background_color")
+	if err != nil {
+		return nil, fmt.Errorf("parse config %q: %w", path, err)
+	}
+	if unquotedBackground {
+		return nil, fmt.Errorf(`validate config %q: iiif.image.background_color: an unquoted hex color is a YAML comment; quote it, e.g. "#ffffff"`, path)
+	}
 	var c Config
 	dec := yaml.NewDecoder(strings.NewReader(expanded))
 	dec.KnownFields(true)
@@ -236,41 +245,60 @@ func imageCacheInvalidationTokenEnv() (string, error) {
 }
 
 func explicitZeroYAMLField(body []byte, path ...string) (bool, error) {
-	var root yaml.Node
-	if err := yaml.Unmarshal(body, &root); err != nil {
+	_, node, err := yamlField(body, path...)
+	if err != nil || node == nil || node.Kind != yaml.ScalarNode {
 		return false, err
-	}
-	node := &root
-	if node.Kind == yaml.DocumentNode {
-		if len(node.Content) == 0 {
-			return false, nil
-		}
-		node = node.Content[0]
-	}
-	for _, key := range path {
-		if node.Kind != yaml.MappingNode {
-			return false, nil
-		}
-		var next *yaml.Node
-		for i := 0; i+1 < len(node.Content); i += 2 {
-			if node.Content[i].Value == key {
-				next = node.Content[i+1]
-				break
-			}
-		}
-		if next == nil {
-			return false, nil
-		}
-		node = next
-	}
-	if node.Kind != yaml.ScalarNode {
-		return false, nil
 	}
 	v, err := strconv.ParseInt(node.Value, 10, 64)
 	if err != nil {
 		return false, nil
 	}
 	return v == 0, nil
+}
+
+var hexColorComment = regexp.MustCompile(`^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})\b`)
+
+// unquotedHexColorYAMLField reports `key: #fff`, which YAML reads as an empty
+// value followed by a comment.
+func unquotedHexColorYAMLField(body []byte, path ...string) (bool, error) {
+	key, node, err := yamlField(body, path...)
+	if err != nil || node == nil || node.Kind != yaml.ScalarNode || node.ShortTag() != "!!null" {
+		return false, err
+	}
+	return hexColorComment.MatchString(node.LineComment) || hexColorComment.MatchString(key.LineComment), nil
+}
+
+// yamlField returns the key and value nodes at path, or nil nodes if absent.
+func yamlField(body []byte, path ...string) (*yaml.Node, *yaml.Node, error) {
+	var root yaml.Node
+	if err := yaml.Unmarshal(body, &root); err != nil {
+		return nil, nil, err
+	}
+	node := &root
+	if node.Kind == yaml.DocumentNode {
+		if len(node.Content) == 0 {
+			return nil, nil, nil
+		}
+		node = node.Content[0]
+	}
+	var key *yaml.Node
+	for _, name := range path {
+		if node.Kind != yaml.MappingNode {
+			return nil, nil, nil
+		}
+		var next *yaml.Node
+		for i := 0; i+1 < len(node.Content); i += 2 {
+			if node.Content[i].Value == name {
+				key, next = node.Content[i], node.Content[i+1]
+				break
+			}
+		}
+		if next == nil {
+			return nil, nil, nil
+		}
+		node = next
+	}
+	return key, node, nil
 }
 
 func (c *Config) applyDefaults() {
@@ -431,6 +459,11 @@ func (c *Config) validate() error {
 	case "auto", "sequential", "random":
 	default:
 		return fmt.Errorf("iiif.image.load_access: %q not one of auto|sequential|random", c.IIIF.Image.LoadAccess)
+	}
+	if c.IIIF.Image.BackgroundColor != "" {
+		if _, err := parseColor(c.IIIF.Image.BackgroundColor); err != nil {
+			return fmt.Errorf("iiif.image.background_color: %w", err)
+		}
 	}
 	if c.Cache.MaxBytes < 0 {
 		return errors.New("cache.max_bytes: must be >= 0")

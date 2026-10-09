@@ -103,6 +103,9 @@ iiif:
     # unnecessary work for simple full-image derivatives. Force `sequential` or
     # `random` only when profiling a specific deployment or source format.
     load_access: auto
+    # Fill for transparent pixels and arbitrary-rotation corners in jpg/pdf
+    # output: "#rgb", "#rrggbb" (quoted), or a CSS name. Omitted means black.
+    # background_color: white
     # Cache info.json dimensions by identifier plus source mtime/size.
     info_dimension_cache: true
     # Optional protected route for invalidating all derivative variants for one
