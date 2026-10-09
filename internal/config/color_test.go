@@ -76,3 +76,40 @@ sources:
 		t.Fatalf("err = %v, want error naming the key and value", err)
 	}
 }
+
+func TestLoadRejectsUnquotedHexBackgroundColor(t *testing.T) {
+	body := func(value string) string {
+		return `
+server:
+  public_base_url: http://localhost:8080
+iiif:
+  image:
+    background_color: ` + value + `
+sources:
+  default: file
+  file:
+    root: /tmp
+`
+	}
+	t.Setenv("TRIPLET_TEST_BG", "#fff")
+	tests := []struct {
+		value   string
+		wantErr bool
+	}{
+		{value: `#ffffff`, wantErr: true},
+		{value: `#FFF`, wantErr: true},
+		{value: `${TRIPLET_TEST_BG}`, wantErr: true},
+		{value: `"${TRIPLET_TEST_BG}"`},
+		{value: `"#ffffff"`},
+		{value: `# default black`},
+		{value: ``},
+	}
+	for _, tc := range tests {
+		t.Run(tc.value, func(t *testing.T) {
+			_, err := Load(writeConfig(t, body(tc.value)))
+			if tc.wantErr != (err != nil) || (err != nil && !strings.Contains(err.Error(), "iiif.image.background_color: an unquoted hex color")) {
+				t.Fatalf("err = %v, want error = %v", err, tc.wantErr)
+			}
+		})
+	}
+}

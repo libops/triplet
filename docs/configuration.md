@@ -186,7 +186,8 @@ name such as `white`, and serves the same purpose as Cantaloupe's
 `processor.background_color`. When omitted, those areas are black. Quote hex
 values, because YAML treats an unquoted `#` as the start of a comment. This
 also applies to environment variables, which are substituted before parsing:
-write `background_color: "${BG}"`, not `background_color: ${BG}`. Other
+write `background_color: "${BG}"`, not `background_color: ${BG}`. Triplet
+refuses to start when it finds an unquoted hex color there. Other
 formats keep their alpha channel. Derivative cache keys do not include this
 setting, so clear or invalidate cached derivatives after changing it.
 
