@@ -129,17 +129,23 @@ func (p *Pipeline) Transform(ctx context.Context, req parse.Request, w io.Writer
 
 	params := gv.NewImportParams()
 	params.Access.Set(p.loadAccess(req))
-	img, err := gv.LoadImageFromFileDirect(source.Path, params)
-	if err != nil {
-		return Result{}, WrapSourceLoadError("govips load", err)
-	}
+	var img *gv.ImageRef
 	defer func() {
 		if img != nil {
 			img.Close()
 		}
 	}()
 
-	dims := dimensions{width: img.Width(), height: img.Height(), contentType: source.Meta.ContentType}
+	dims := dimensions{contentType: source.Meta.ContentType}
+	strips := stripLayoutForCrop(source, req)
+	if strips != nil {
+		dims.width, dims.height = strips.width, strips.height
+	} else {
+		if img, err = gv.LoadImageFromFileDirect(source.Path, params); err != nil {
+			return Result{}, WrapSourceLoadError("govips load", err)
+		}
+		dims.width, dims.height = img.Width(), img.Height()
+	}
 	if err := CheckSourcePixels(dims.width, dims.height, p.limits.MaxSourcePixels); err != nil {
 		return Result{}, err
 	}
@@ -155,6 +161,14 @@ func (p *Pipeline) Transform(ctx context.Context, req parse.Request, w io.Writer
 	}
 	if p.limits.MaxOutputPixels > 0 && int64(outW)*int64(outH) > p.limits.MaxOutputPixels {
 		return Result{}, fmt.Errorf("%w: output %dx%d exceeds max_output_pixels %d", ErrBadRequest, outW, outH, p.limits.MaxOutputPixels)
+	}
+
+	if strips != nil {
+		var release func()
+		if img, top, release, err = loadStrips(source.Path, strips, top, regionH, params); err != nil {
+			return Result{}, WrapSourceLoadError("govips load", err)
+		}
+		defer release()
 	}
 
 	if page := chooseJP2Page(jp2Pages, regionW, regionH, outW, outH); page > 0 {
