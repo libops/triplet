@@ -37,7 +37,24 @@ var (
 			Help: "Current number of in-flight HTTP requests.",
 		},
 	)
+	stripWindowLoads = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "triplet_tiff_strip_window_loads_total",
+			Help: "Crops of striped TIFFs by how they were loaded: only the needed strips (window) or the whole file (full).",
+		},
+		[]string{"result"},
+	)
 )
+
+// StripWindowLoad counts a crop of a striped TIFF loaded from a strip window,
+// or from the whole file when it needs all rows or the window failed.
+func StripWindowLoad(window bool) {
+	result := "full"
+	if window {
+		result = "window"
+	}
+	stripWindowLoads.WithLabelValues(result).Inc()
+}
 
 // Handler returns the Prometheus scrape handler.
 func Handler() http.Handler {
@@ -69,6 +86,7 @@ func reg() *prometheus.Registry {
 			requestsTotal,
 			requestDuration,
 			inFlight,
+			stripWindowLoads,
 			vipsCollector{},
 		)
 	})

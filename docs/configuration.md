@@ -178,6 +178,13 @@ files:
 | `sequential` | Streams source pixels forward. | Useful for profiling whole-image derivatives or source formats where sequential reads are materially cheaper. Poor fit for tile-heavy crop workloads. |
 | `random` | Allows libvips to seek around the source. | Useful for profiling tile and region workloads. Can do unnecessary work for simple full-image derivatives. |
 
+With any of these, a crop of a striped (non-tiled) TIFF is loaded from a copy of
+the file that holds only the strips covering the crop, because libvips would
+otherwise decode every row above it. Files it can't handle that way (tiled,
+plane-separate, old-style JPEG, single strip) are loaded as before; the metric
+`triplet_tiff_strip_window_loads_total{result="window|full"}` shows how often
+each happens.
+
 ## Advertised image limits
 
 These fields do not enforce additional server-side work limits. They advertise
