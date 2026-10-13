@@ -127,8 +127,9 @@ func (p *Pipeline) Transform(ctx context.Context, req parse.Request, w io.Writer
 	}
 	defer release()
 
+	access := p.loadAccess(req)
 	params := gv.NewImportParams()
-	params.Access.Set(p.loadAccess(req))
+	params.Access.Set(access)
 	img, err := gv.LoadImageFromFileDirect(source.Path, params)
 	if err != nil {
 		return Result{}, WrapSourceLoadError("govips load", err)
@@ -139,12 +140,22 @@ func (p *Pipeline) Transform(ctx context.Context, req parse.Request, w io.Writer
 		}
 	}()
 
+	orientation := Orientation(img, source.Path)
+	// Orientations 3-8 need rows out of order, which a sequential load can't serve.
+	if orientation > 2 && access == gv.AccessSequential {
+		img.Close()
+		params.Access.Set(gv.AccessRandom)
+		if img, err = gv.LoadImageFromFileDirect(source.Path, params); err != nil {
+			return Result{}, WrapSourceLoadError("govips load", err)
+		}
+	}
+	displayW, displayH := displaySize(img.Width(), img.Height(), orientation)
 	dims := dimensions{width: img.Width(), height: img.Height(), contentType: source.Meta.ContentType}
 	if err := CheckSourcePixels(dims.width, dims.height, p.limits.MaxSourcePixels); err != nil {
 		return Result{}, err
 	}
 	jp2Pages := jp2PageCount(req.Identifier, dims.contentType, img)
-	left, top, regionW, regionH, err := resolveRegion(req.Region, dims.width, dims.height)
+	left, top, regionW, regionH, err := resolveRegion(req.Region, displayW, displayH)
 	if err != nil {
 		return Result{}, fmt.Errorf("%w: %w", ErrBadRequest, err)
 	}
@@ -157,7 +168,10 @@ func (p *Pipeline) Transform(ctx context.Context, req parse.Request, w io.Writer
 		return Result{}, fmt.Errorf("%w: output %dx%d exceeds max_output_pixels %d", ErrBadRequest, outW, outH, p.limits.MaxOutputPixels)
 	}
 
-	if page := chooseJP2Page(jp2Pages, regionW, regionH, outW, outH); page > 0 {
+	page := chooseJP2Page(jp2Pages, regionW, regionH, outW, outH)
+	// Regions are given on the displayed image; cut the matching stored pixels.
+	left, top, regionW, regionH = storedRegion(orientation, dims.width, dims.height, left, top, regionW, regionH)
+	if page > 0 {
 		img.Close()
 		params := gv.NewImportParams()
 		params.Access.Set(p.loadAccess(req))
@@ -177,6 +191,12 @@ func (p *Pipeline) Transform(ctx context.Context, req parse.Request, w io.Writer
 		if err := img.ExtractArea(left, top, regionW, regionH); err != nil {
 			return Result{}, tvips.Wrap("govips extract_area", err)
 		}
+	}
+	if orientation != 1 {
+		if err := applyOrientation(img, orientation); err != nil {
+			return Result{}, err
+		}
+		regionW, regionH = img.Width(), img.Height()
 	}
 	if outW != regionW || outH != regionH {
 		scaleX := float64(outW) / float64(regionW)

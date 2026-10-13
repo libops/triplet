@@ -7,6 +7,7 @@ import (
 	"errors"
 	"image"
 	"image/color"
+	"image/jpeg"
 	"image/png"
 	"io"
 	"log/slog"
@@ -147,6 +148,33 @@ func TestInfoJSON(t *testing.T) {
 	}
 	if got := resp.Header.Values("Link"); len(got) != 1 || got[0] != `<http://iiif.io/api/image/3/level2.json>;rel="profile"` {
 		t.Errorf("Link = %#v", got)
+	}
+}
+
+func TestInfoJSONReportsDisplayedSizeOfOrientedJPEG(t *testing.T) {
+	srv, root := setupTestServer(t)
+	defer srv.Close()
+	var enc bytes.Buffer
+	if err := jpeg.Encode(&enc, image.NewRGBA(image.Rect(0, 0, 200, 100)), nil); err != nil {
+		t.Fatal(err)
+	}
+	// APP1 Exif, big-endian, IFD0 with one entry: Orientation (SHORT) = 6.
+	app1 := []byte("\xff\xe1\x00\x22Exif\x00\x00MM\x00*\x00\x00\x00\x08\x00\x01\x01\x12\x00\x03\x00\x00\x00\x01\x00\x06\x00\x00\x00\x00\x00\x00")
+	jpg := append(append(append([]byte(nil), enc.Bytes()[:2]...), app1...), enc.Bytes()[2:]...)
+	if err := os.WriteFile(filepath.Join(root, "turned.jpg"), jpg, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.Get(srv.URL + "/iiif/3/turned.jpg/info.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var info types.Info
+	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+		t.Fatal(err)
+	}
+	if info.Width != 100 || info.Height != 200 {
+		t.Fatalf("dims = %dx%d, want 100x200 (stored 200x100, Exif orientation 6)", info.Width, info.Height)
 	}
 }
 
