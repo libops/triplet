@@ -25,6 +25,7 @@
         "execve",
         "exit",
         "exit_group",
+        "faccessat",
         "faccessat2",
         "fcntl",
         "fchmod",
