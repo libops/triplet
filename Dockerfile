@@ -14,13 +14,13 @@ ARG \
     # renovate: datasource=repology depName=debian_13/ca-certificates
     CA_CERTIFICATES_VERSION=20250419 \
     # renovate: datasource=repology depName=debian_13/curl
-    CURL_VERSION=8.14.1-2+deb13u4 \
+    CURL_VERSION=8.14.1-2+deb13u7 \
     # renovate: datasource=repology depName=debian_13/libcgif-dev
     LIBCGIF_DEV_VERSION=0.5.0-1 \
     # renovate: datasource=repology depName=debian_13/libexpat1-dev
-    LIBEXPAT1_DEV_VERSION=2.8.2-1~deb13u1 \
+    LIBEXPAT1_DEV_VERSION=2.9.0-1~deb13u1 \
     # renovate: datasource=repology depName=debian_13/libglib2.0-dev
-    LIBGLIB2_0_DEV_VERSION=2.84.4-3~deb13u3 \
+    LIBGLIB2_0_DEV_VERSION=2.84.4-3~deb13u5 \
     # renovate: datasource=repology depName=debian_13/libimagequant-dev
     LIBIMAGEQUANT_DEV_VERSION=2.18.0-1+b2 \
     # renovate: datasource=repology depName=debian_13/libjpeg62-turbo-dev
@@ -30,7 +30,7 @@ ARG \
     # renovate: datasource=repology depName=debian_13/libopenjp2-7-dev
     LIBOPENJP2_7_DEV_VERSION=2.5.3-2.1~deb13u2 \
     # renovate: datasource=repology depName=debian_13/libpng-dev
-    LIBPNG_DEV_VERSION=1.6.48-1+deb13u5 \
+    LIBPNG_DEV_VERSION=1.6.48-1+deb13u6 \
     # renovate: datasource=repology depName=debian_13/libspng-dev
     LIBSPNG_DEV_VERSION=0.7.4-2 \
     # renovate: datasource=repology depName=debian_13/libtiff-dev
@@ -40,14 +40,13 @@ ARG \
     # renovate: datasource=repology depName=debian_13/meson
     MESON_VERSION=1.7.0-1 \
     # renovate: datasource=repology depName=debian_13/ninja-build
-    NINJA_BUILD_VERSION=1.12.1-1 \
+    NINJA_BUILD_VERSION=1.12.1-1+b1 \
     # renovate: datasource=repology depName=debian_13/pkg-config
     PKG_CONFIG_VERSION=1.8.1-4 \
     # renovate: datasource=repology depName=debian_13/python3
     PYTHON3_VERSION=3.13.5-1
 
-RUN NINJA_BUILD_VERSION_HACK="${NINJA_BUILD_VERSION}$([ "${TARGETARCH}" = "arm64" ] && echo "+b1" || echo "")" && \
-  apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential="${BUILD_ESSENTIAL_VERSION}" \
     ca-certificates="${CA_CERTIFICATES_VERSION}" \
     curl="${CURL_VERSION}" \
@@ -63,7 +62,7 @@ RUN NINJA_BUILD_VERSION_HACK="${NINJA_BUILD_VERSION}$([ "${TARGETARCH}" = "arm64
     libtiff-dev="${LIBTIFF_DEV_VERSION}" \
     libwebp-dev="${LIBWEBP_DEV_VERSION}" \
     meson="${MESON_VERSION}" \
-    ninja-build="${NINJA_BUILD_VERSION_HACK}" \
+    ninja-build="${NINJA_BUILD_VERSION}" \
     pkg-config="${PKG_CONFIG_VERSION}" \
     python3="${PYTHON3_VERSION}" \
   && rm -rf /var/lib/apt/lists/*
@@ -160,9 +159,9 @@ ARG \
     # renovate: datasource=repology depName=debian_13/libcgif0
     LIBCGIF0_VERSION=0.5.0-1 \
     # renovate: datasource=repology depName=debian_13/libexpat1
-    LIBEXPAT1_VERSION=2.7.1-2 \
+    LIBEXPAT1_VERSION=2.9.0-1~deb13u1 \
     # renovate: datasource=repology depName=debian_13/libglib2.0-0t64
-    LIBGLIB2_0_0T64_VERSION=2.84.4-3~deb13u3 \
+    LIBGLIB2_0_0T64_VERSION=2.84.4-3~deb13u5 \
     # renovate: datasource=repology depName=debian_13/libimagequant0
     LIBIMAGEQUANT0_VERSION=2.18.0-1+b2 \
     # renovate: datasource=repology depName=debian_13/libjpeg62-turbo
@@ -172,7 +171,7 @@ ARG \
     # renovate: datasource=repology depName=debian_13/libopenjp2-7
     LIBOPENJP2_7_VERSION=2.5.3-2.1~deb13u2 \
     # renovate: datasource=repology depName=debian_13/libpng16-16t64
-    LIBPNG16_16T64_VERSION=1.6.48-1+deb13u5 \
+    LIBPNG16_16T64_VERSION=1.6.48-1+deb13u6 \
     # renovate: datasource=repology depName=debian_13/libspng0
     LIBSPNG0_VERSION=0.7.4-2 \
     # renovate: datasource=repology depName=debian_13/libtiff6
