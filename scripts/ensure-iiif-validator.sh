@@ -7,28 +7,39 @@ VENV_DIR="${IIIF_VALIDATOR_VENV:-$ROOT_DIR/.cache/iiif-validator}"
 VALIDATOR="$VENV_DIR/bin/iiif-validate.py"
 PACKAGE_VERSION="${IIIF_VALIDATOR_VERSION:-1.0.5}"
 
+# The installed entry point imports python-magic before it processes CLI
+# arguments, so --help verifies the interpreter, the Python package, and native
+# libmagic without embedding Python source in this shell script.
+validator_runs() {
+  "$VALIDATOR" --help >/dev/null 2>&1
+}
+
 check_runtime() {
-  # The installed entry point imports python-magic before it processes CLI
-  # arguments, so --help verifies both the Python package and native libmagic
-  # without embedding Python source in this shell script.
-  if "$VALIDATOR" --help >/dev/null 2>&1; then
+  local output
+  if output="$("$VALIDATOR" --help 2>&1)"; then
     return 0
   fi
 
+  printf 'iiif-validator is installed but does not run:\n%s\n\n' "$(printf '%s\n' "$output" | tail -n 5)" >&2
   cat >&2 <<'EOF'
-iiif-validator is installed, but Python cannot load libmagic.
-
-Install the native libmagic library, then rerun this command:
+If the error mentions libmagic, install the native library and rerun:
   macOS:         brew install libmagic
   Debian/Ubuntu: sudo apt-get install libmagic1
 EOF
   exit 1
 }
 
-if [ -x "$VALIDATOR" ]; then
-  check_runtime
+if [ -x "$VALIDATOR" ] && validator_runs; then
   printf '%s\n' "$VALIDATOR"
   exit 0
+fi
+
+# A virtualenv only works with the Python it was created by, so one restored
+# from a CI cache built on another runner image, or left behind by a Python
+# upgrade, is rebuilt rather than reported as a libmagic problem.
+if [ -f "$VENV_DIR/pyvenv.cfg" ]; then
+  echo "Recreating iiif-validator virtualenv in $VENV_DIR" >&2
+  rm -rf "$VENV_DIR"
 fi
 
 if ! command -v python3 >/dev/null 2>&1; then
