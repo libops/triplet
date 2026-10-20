@@ -6,6 +6,7 @@ import (
 	"image"
 	"image/color"
 	"image/gif"
+	"image/jpeg"
 	"image/png"
 	"io"
 	"log/slog"
@@ -252,6 +253,145 @@ func TestTransformToFileMaxDerivativeBytes(t *testing.T) {
 	}
 }
 
+func TestTransformJPEGFlattensAlphaOntoBackground(t *testing.T) {
+	white := color.RGBA{255, 255, 255, 255}
+	tests := []struct {
+		name       string
+		background *color.RGBA
+		want       uint8
+	}{
+		{name: "default black", background: nil, want: 0},
+		{name: "configured white", background: &white, want: 255},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			p := newTestPipelineWithOptions(t, Options{BackgroundColor: tc.background})
+			img := transformJPEG(t, p, "transparent.png/full/max/0/default.jpg")
+			assertNearRGB(t, img.At(150, 50), tc.want, tc.want, tc.want)
+			assertNearRGB(t, img.At(50, 50), 255, 0, 0)
+		})
+	}
+}
+
+func TestTransformQualityAppliesAfterFlatten(t *testing.T) {
+	p := newTestPipelineWithOptions(t, Options{BackgroundColor: &color.RGBA{255, 0, 0, 255}})
+
+	gray := transformJPEG(t, p, "transparent.png/full/max/0/gray.jpg")
+	if _, ok := gray.(*image.Gray); !ok {
+		t.Fatalf("gray: decoded %T, want *image.Gray", gray)
+	}
+
+	bitonal := transformJPEG(t, p, "transparent.png/full/max/0/bitonal.jpg")
+	if _, ok := bitonal.(*image.Gray); !ok {
+		t.Fatalf("bitonal: decoded %T, want *image.Gray", bitonal)
+	}
+	if v := colorValue(bitonal.At(150, 50)) >> 8; v > 8 && v < 247 {
+		t.Fatalf("bitonal: background pixel = %d, want black or white", v)
+	}
+}
+
+func TestTransformGrayAlphaSourceStaysGray(t *testing.T) {
+	p := newTestPipelineWithOptions(t, Options{BackgroundColor: &color.RGBA{255, 255, 255, 255}})
+	for _, tc := range []struct {
+		path string
+		x, y int
+	}{
+		{path: "gray-alpha.png/full/max/0/default.jpg", x: 150, y: 50},
+		{path: "gray-alpha.png/full/max/45/default.jpg", x: 0, y: 0},
+	} {
+		img := transformJPEG(t, p, tc.path)
+		if _, ok := img.(*image.Gray); !ok {
+			t.Fatalf("%s: decoded %T, want *image.Gray", tc.path, img)
+		}
+		assertNearRGB(t, img.At(tc.x, tc.y), 255, 255, 255)
+	}
+}
+
+func TestTransformPNGKeepsAlphaWithBackground(t *testing.T) {
+	p := newTestPipelineWithOptions(t, Options{BackgroundColor: &color.RGBA{255, 255, 255, 255}})
+	req := mustParseImageRequest(t, "transparent.png/full/max/0/default.png")
+
+	var buf bytes.Buffer
+	if _, err := p.Transform(context.Background(), req, &buf); err != nil {
+		t.Fatalf("transform: %v", err)
+	}
+	if _, _, _, a := decodePNG(t, buf.Bytes()).At(150, 50).RGBA(); a != 0 {
+		t.Fatalf("alpha = %d, want 0", a)
+	}
+}
+
+func TestTransformArbitraryRotationFillsJPEGCorners(t *testing.T) {
+	p := newTestPipelineWithOptions(t, Options{BackgroundColor: &color.RGBA{255, 255, 255, 255}})
+	img := transformJPEG(t, p, "sample.png/full/max/45/default.jpg")
+	assertNearRGB(t, img.At(0, 0), 255, 255, 255)
+}
+
+func TestTransformArbitraryRotationFillsGrayJPEGCorners(t *testing.T) {
+	tests := []struct {
+		name       string
+		background color.RGBA
+		wantGray   bool
+	}{
+		{name: "neutral", background: color.RGBA{128, 128, 128, 255}, wantGray: true},
+		{name: "non-neutral", background: color.RGBA{255, 0, 0, 255}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			p := newTestPipelineWithOptions(t, Options{BackgroundColor: &tc.background})
+			img := transformJPEG(t, p, "gray.png/full/max/45/default.jpg")
+			if _, gray := img.(*image.Gray); gray != tc.wantGray {
+				t.Fatalf("decoded %T, want gray = %v", img, tc.wantGray)
+			}
+			assertNearRGB(t, img.At(0, 0), tc.background.R, tc.background.G, tc.background.B)
+		})
+	}
+}
+
+func TestTransformArbitraryRotationFillsCMYKJPEGCorners(t *testing.T) {
+	root := t.TempDir()
+	writeSamplePNG(t, filepath.Join(root, "sample.png"))
+	writeCMYKTIFF(t, filepath.Join(root, "sample.png"), filepath.Join(root, "cmyk.tif"))
+	op, err := storage.NewFileOpener(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := New(op, Limits{}, Options{BackgroundColor: &color.RGBA{255, 255, 255, 255}})
+	img := transformJPEG(t, p, "cmyk.tif/full/max/45/default.jpg")
+	assertNearRGB(t, img.At(0, 0), 255, 255, 255)
+}
+
+func TestTransformFlattenDropsCMYKProfile(t *testing.T) {
+	root := t.TempDir()
+	writeTransparentPNG(t, filepath.Join(root, "transparent.png"))
+	writeCMYKTIFF(t, filepath.Join(root, "transparent.png"), filepath.Join(root, "cmyk-alpha.tif"))
+	op, err := storage.NewFileOpener(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := New(op, Limits{}, Options{ColorManagement: "preserve", BackgroundColor: &color.RGBA{255, 255, 255, 255}})
+
+	var buf bytes.Buffer
+	if _, err := p.Transform(context.Background(), mustParseImageRequest(t, "cmyk-alpha.tif/full/max/0/default.jpg"), &buf); err != nil {
+		t.Fatalf("transform: %v", err)
+	}
+	out, err := gv.LoadImageFromBuffer(buf.Bytes(), nil)
+	if err != nil {
+		t.Fatalf("load output: %v", err)
+	}
+	defer out.Close()
+	if out.Interpretation() == gv.InterpretationCMYK {
+		t.Fatal("output is still CMYK")
+	}
+	if icc := out.GetICCProfile(); len(icc) >= 20 && string(icc[16:20]) == "CMYK" {
+		t.Fatal("output embeds the source CMYK profile")
+	}
+	img, err := jpeg.Decode(bytes.NewReader(buf.Bytes()))
+	if err != nil {
+		t.Fatalf("decode jpeg: %v", err)
+	}
+	assertNearRGB(t, img.At(150, 50), 255, 255, 255)
+}
+
 func TestChooseJP2Page(t *testing.T) {
 	tests := []struct {
 		name             string
@@ -392,6 +532,131 @@ func newTestPipelineWithLimits(t *testing.T, limits Limits) *Pipeline {
 		t.Fatal(err)
 	}
 	return New(op, limits)
+}
+
+func newTestPipelineWithOptions(t *testing.T, opts Options) *Pipeline {
+	t.Helper()
+	root := t.TempDir()
+	writeSamplePNG(t, filepath.Join(root, "sample.png"))
+	writeTransparentPNG(t, filepath.Join(root, "transparent.png"))
+	writeGrayAlphaPNG(t, filepath.Join(root, "transparent.png"), filepath.Join(root, "gray-alpha.png"))
+	writeGrayPNG(t, filepath.Join(root, "gray.png"))
+	op, err := storage.NewFileOpener(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return New(op, Limits{}, opts)
+}
+
+// writeTransparentPNG writes opaque red on the left half and fully
+// transparent black on the right half.
+func writeTransparentPNG(t *testing.T, path string) {
+	t.Helper()
+	img := image.NewNRGBA(image.Rect(0, 0, 200, 100))
+	for y := 0; y < 100; y++ {
+		for x := 0; x < 100; x++ {
+			img.Set(x, y, color.NRGBA{255, 0, 0, 255})
+		}
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if err := png.Encode(f, img); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeGrayPNG(t *testing.T, path string) {
+	t.Helper()
+	img := image.NewGray(image.Rect(0, 0, 200, 100))
+	for i := range img.Pix {
+		img.Pix[i] = 100
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if err := png.Encode(f, img); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// writeCMYKTIFF writes a CMYK copy of src with an embedded CMYK profile,
+// keeping any alpha band.
+func writeCMYKTIFF(t *testing.T, src, dst string) {
+	t.Helper()
+	img, err := gv.LoadImageFromFile(src, nil)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	defer img.Close()
+	if err := img.ToColorSpace(gv.InterpretationCMYK); err != nil {
+		t.Skipf("libvips CMYK conversion unavailable: %v", err)
+	}
+	if !img.HasICCProfile() {
+		t.Fatal("fixture has no CMYK profile")
+	}
+	out, _, err := img.ExportTiff(gv.NewTiffExportParams())
+	if err != nil {
+		t.Fatalf("export tiff: %v", err)
+	}
+	if err := os.WriteFile(dst, out, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// writeGrayAlphaPNG writes a two-band copy of src; Go's PNG encoder cannot.
+func writeGrayAlphaPNG(t *testing.T, src, dst string) {
+	t.Helper()
+	img, err := gv.LoadImageFromFile(src, nil)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	defer img.Close()
+	if err := img.ToColorSpace(gv.InterpretationBW); err != nil {
+		t.Fatalf("to b-w: %v", err)
+	}
+	if img.Bands() != 2 {
+		t.Fatalf("bands = %d, want 2", img.Bands())
+	}
+	out, _, err := img.ExportPng(gv.NewPngExportParams())
+	if err != nil {
+		t.Fatalf("export png: %v", err)
+	}
+	if err := os.WriteFile(dst, out, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func transformJPEG(t *testing.T, p *Pipeline, path string) image.Image {
+	t.Helper()
+	var buf bytes.Buffer
+	res, err := p.Transform(context.Background(), mustParseImageRequest(t, path), &buf)
+	if err != nil {
+		t.Fatalf("transform: %v", err)
+	}
+	if res.ContentType != "image/jpeg" {
+		t.Fatalf("content-type = %q", res.ContentType)
+	}
+	img, err := jpeg.Decode(bytes.NewReader(buf.Bytes()))
+	if err != nil {
+		t.Fatalf("decode jpeg: %v", err)
+	}
+	return img
+}
+
+// assertNearRGB allows for JPEG compression error.
+func assertNearRGB(t *testing.T, c color.Color, r, g, b uint8) {
+	t.Helper()
+	got := color.RGBAModel.Convert(c).(color.RGBA)
+	for _, ch := range []struct{ got, want uint8 }{{got.R, r}, {got.G, g}, {got.B, b}} {
+		if diff := int(ch.got) - int(ch.want); diff < -8 || diff > 8 {
+			t.Fatalf("pixel = %v, want about (%d,%d,%d)", got, r, g, b)
+		}
+	}
 }
 
 func writeSampleImage(t *testing.T) string {
