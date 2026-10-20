@@ -49,6 +49,15 @@ is configured. If a cache remains above `cache.max_bytes` or
 `cache.source_max_bytes`, the command reports that condition and exits non-zero;
 it does not delete live entries solely to satisfy a size target.
 
+### Cached derivatives after an upgrade
+
+Cache keys don't include the Triplet version, so a derivative rendered by an
+older version is served until it expires, even when the new version would
+render the same request differently. When release notes say a change affects
+existing derivatives, clear them: delete everything under `cache.root` while
+Triplet is stopped, or use the [invalidation route](#derivative-invalidation)
+for the affected identifiers.
+
 ### Derivative invalidation
 
 The route writes an invalidation marker into the derivative cache. Subsequent

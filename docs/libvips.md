@@ -72,7 +72,7 @@ vips:
 | `modules` | No dynamic libvips plugin modules loaded at runtime. | Improves container predictability and security; needed support is compiled in. |
 | `introspection` | No GObject introspection metadata. | Fine; govips uses cgo bindings, not runtime GIR metadata. |
 | `cfitsio` | No FITS astronomy image load/save. | Not needed unless serving FITS. |
-| `exif` | No libexif metadata support. | Reduces metadata parser surface; EXIF orientation/metadata handling is limited. |
+| `exif` | No libexif metadata support. | Reduces metadata parser surface. libvips still reads the TIFF Orientation tag; for JPEG, PNG and WebP, Triplet reads the orientation from the Exif block itself. Derivatives are turned upright with orientation 1; the other Exif fields are kept unchanged or stripped, depending on `color_management`. |
 | `fftw` | No FFT/frequency-domain operations. | Not used for IIIF resize/crop/encode. |
 | `fontconfig` | No font discovery. | Not needed while text rendering is disabled. |
 | `archive` | No archive-backed pyramid/deepzoom packaging. | Not used by current handlers. |

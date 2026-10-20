@@ -44,6 +44,10 @@ static int triplet_tiffsave(void *image, const char *filename, int compression, 
 static int triplet_jp2ksave(void *image, const char *filename) {
 	return vips_jp2ksave((VipsImage *)image, filename, NULL);
 }
+
+static void triplet_set_blob(void *image, const char *name, const void *data, size_t length) {
+	vips_image_set_blob_copy((VipsImage *)image, name, data, length);
+}
 */
 import "C"
 
@@ -241,6 +245,17 @@ func (w *countingWriter) Write(p []byte) (int, error) {
 	n, err := w.w.Write(p)
 	w.n += int64(n)
 	return n, err
+}
+
+// setBlob replaces a metadata blob of img. The pinned govips' SetBlob passes
+// the slice header instead of its bytes (fixed upstream in davidbyttow/govips#549).
+func setBlob(img *gv.ImageRef, name string, data []byte) {
+	if len(data) == 0 {
+		return
+	}
+	cname := C.CString(name)
+	defer C.free(unsafe.Pointer(cname))
+	C.triplet_set_blob(imagePtr(img), cname, unsafe.Pointer(&data[0]), C.size_t(len(data)))
 }
 
 func imagePtr(img *gv.ImageRef) unsafe.Pointer {
