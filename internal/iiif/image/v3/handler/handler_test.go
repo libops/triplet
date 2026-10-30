@@ -39,6 +39,10 @@ func setupTestServerWithAllowedOrigins(t *testing.T, allowedOrigins []string) (*
 }
 
 func setupTestServerWithOptions(t *testing.T, derivCache cache.Store, allowedOrigins []string, invalidationToken string) (*httptest.Server, string) {
+	return setupTestServerWithInfoMetadata(t, derivCache, allowedOrigins, invalidationToken, types.InfoMetadata{})
+}
+
+func setupTestServerWithInfoMetadata(t *testing.T, derivCache cache.Store, allowedOrigins []string, invalidationToken string, infoMetadata types.InfoMetadata) (*httptest.Server, string) {
 	t.Helper()
 	root := t.TempDir()
 	img := image.NewRGBA(image.Rect(0, 0, 200, 100))
@@ -66,6 +70,7 @@ func setupTestServerWithOptions(t *testing.T, derivCache cache.Store, allowedOri
 		nil,
 		nil,
 		types.Limits{MaxArea: 10_000_000, MaxWidth: 4096, MaxHeight: 4096},
+		infoMetadata,
 		true,
 		250_000_000,
 		1<<30,
@@ -269,6 +274,7 @@ func TestUnsupportedSourceUsesClientError(t *testing.T) {
 		nil,
 		nil,
 		types.Limits{MaxArea: 10_000_000},
+		types.InfoMetadata{},
 		true,
 		250_000_000,
 		1<<30,
@@ -319,6 +325,7 @@ func TestInfoUnsupportedSourceUsesClientError(t *testing.T) {
 		nil,
 		nil,
 		types.Limits{MaxArea: 10_000_000},
+		types.InfoMetadata{},
 		true,
 		250_000_000,
 		1<<30,
@@ -377,6 +384,7 @@ func TestDerivativeCacheFailureWarns(t *testing.T) {
 		nil,
 		nil,
 		types.Limits{MaxArea: 10_000_000},
+		types.InfoMetadata{},
 		true,
 		250_000_000,
 		1<<30,

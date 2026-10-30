@@ -106,6 +106,10 @@ func Build(cfg *config.Config, logger *slog.Logger) (*http.Server, error) {
 				MaxWidth:  cfg.IIIF.Image.MaxWidth,
 				MaxHeight: cfg.IIIF.Image.MaxHeight,
 			},
+			imgtypes.InfoMetadata{
+				PhysicalDimensions:     cfg.IIIF.Image.InfoPhysicalDimensions,
+				RightsFromWebStatement: cfg.IIIF.Image.InfoRightsFromWebStatement,
+			},
 			cfg.IIIF.Image.InfoDimensionCache == nil || *cfg.IIIF.Image.InfoDimensionCache,
 			cfg.IIIF.Image.MaxSourcePixels,
 			int64(cfg.IIIF.Image.MaxSourceBytes),

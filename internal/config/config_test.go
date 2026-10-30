@@ -942,3 +942,32 @@ sources:
 		t.Fatalf("err = %v, want vips.blocked_operations validation error", err)
 	}
 }
+
+func TestLoadInfoMetadataOptions(t *testing.T) {
+	load := func(image string) Image {
+		t.Helper()
+		c, err := Load(writeConfig(t, `
+server:
+  public_base_url: http://localhost:8080
+iiif:
+  image:
+`+image+`
+sources:
+  default: file
+  file:
+    root: /tmp
+`))
+		if err != nil {
+			t.Fatalf("load: %v", err)
+		}
+		return c.IIIF.Image
+	}
+
+	if got := load("    enabled: true"); got.InfoPhysicalDimensions || got.InfoRightsFromWebStatement {
+		t.Fatalf("defaults = %v, %v; want both off", got.InfoPhysicalDimensions, got.InfoRightsFromWebStatement)
+	}
+	got := load("    info_physical_dimensions: true\n    info_rights_from_web_statement: true")
+	if !got.InfoPhysicalDimensions || !got.InfoRightsFromWebStatement {
+		t.Fatalf("got %v, %v; want both on", got.InfoPhysicalDimensions, got.InfoRightsFromWebStatement)
+	}
+}
