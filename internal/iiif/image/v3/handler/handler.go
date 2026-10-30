@@ -372,7 +372,7 @@ func (h *Handler) imageDimensions(ctx context.Context, identifier string) (int, 
 		return 0, 0, fmt.Errorf("vips load %q size=%d content_type=%q mod_time=%s: %w", path, meta.Size, meta.ContentType, meta.ModTime.Format(time.RFC3339Nano), err)
 	}
 	defer img.Close()
-	width, height := img.Width(), img.Height()
+	width, height := pipeline.DisplaySize(img, path)
 	if err := pipeline.CheckSourcePixels(width, height, h.maxSourcePixels); err != nil {
 		return 0, 0, err
 	}
