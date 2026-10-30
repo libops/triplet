@@ -100,6 +100,8 @@ type Image struct {
 	LoadAccess                       string   `yaml:"load_access"`
 	BackgroundColor                  string   `yaml:"background_color"`
 	InfoDimensionCache               *bool    `yaml:"info_dimension_cache"`
+	InfoPhysicalDimensions           bool     `yaml:"info_physical_dimensions"`
+	InfoRightsFromWebStatement       bool     `yaml:"info_rights_from_web_statement"`
 }
 
 // Presentation holds Presentation API 3.0 settings (milestone 2).

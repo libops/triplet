@@ -206,6 +206,52 @@ iiif:
 
 `0` omits the corresponding field from `info.json`.
 
+## Source metadata in info.json
+
+Both options are off by default. Each adds a field to `info.json` only when the
+source file supplies a usable value.
+
+```yaml
+iiif:
+  image:
+    info_physical_dimensions: true
+    info_rights_from_web_statement: true
+```
+
+`info_physical_dimensions` reads the resolution stored in the file (TIFF, JPEG
+and PNG; for a multi-page TIFF, the first page, which is the one `info.json`
+describes) and advertises it as a [Physical Dimensions
+service](https://iiif.io/api/annex/services/#physical-dimensions) in `service`:
+
+```json
+"service": [{
+  "@context": "http://iiif.io/api/annex/services/physdim/1/context.json",
+  "id": "https://example.org/iiif/3/scan.tif/info.json",
+  "type": "Service",
+  "profile": "http://iiif.io/api/annex/services/physdim",
+  "physicalScale": 0.0635,
+  "physicalUnits": "mm"
+}]
+```
+
+`physicalScale` is the size of one pixel in millimetres, whatever unit the file
+uses, so 400 dpi gives `0.0635`. It is rounded to 7 significant digits,
+because libvips computes the resolution in single precision. The service is
+omitted when the file has no resolution, an unknown unit (a TIFF resolution
+unit of "none", a JPEG that only gives an aspect ratio, a PNG `pHYs` chunk
+with unit 0), or non-square pixels. Image API 3.0 requires `id` and `type` on
+every service object, which the annex predates, so Triplet adds both.
+`info_rights_from_web_statement` reads the XMP `xmpRights:WebStatement` (the
+IPTC "Web Statement of Rights") and publishes it as `rights` only when it is a
+Creative Commons license or public domain URI or a RightsStatements.org
+statement URI. The Image API 3.0 defines these URIs with `http`, so `https`
+spellings and a missing trailing slash are normalized. Any other value, such as
+a link to a terms page, leaves `rights` unset.
+
+Both options read the source file and are independent of `color_management`,
+which only decides what metadata derivatives keep. With `normalize` or `none`,
+derivatives carry no resolution or XMP, but `info.json` still reports them.
+
 ## Caching
 
 Cache-related settings, including derivative caches, source caches,

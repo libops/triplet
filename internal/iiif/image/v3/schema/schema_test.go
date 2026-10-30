@@ -29,6 +29,19 @@ func TestValidateInfoBytesBuildLevel2Info(t *testing.T) {
 	}
 }
 
+func TestValidateInfoBytesPhysicalDimensionsAndRights(t *testing.T) {
+	info := imagetypes.BuildLevel2Info("http://example.test/iiif/3/sample.tif", 200, 100, imagetypes.Limits{})
+	rights := "http://creativecommons.org/licenses/by/4.0/"
+	info.Rights = &rights
+	doc, err := json.Marshal(imagetypes.InfoDocument{Info: info}.WithPhysicalDimensions(0.0635))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateInfoBytes(doc); err != nil {
+		t.Fatalf("validate info: %v\n%s", err, doc)
+	}
+}
+
 func TestValidateInfoBytesValidatorExamples(t *testing.T) {
 	base := filepath.Join("..", "testdata", "validator")
 	cases := []struct {

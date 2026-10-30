@@ -67,6 +67,49 @@ type (
 	Tile = gen.Tile
 )
 
+// Physical Dimensions service from the IIIF Annex, linked through `service`.
+const (
+	PhysDimContext = "http://iiif.io/api/annex/services/physdim/1/context.json"
+	PhysDimProfile = "http://iiif.io/api/annex/services/physdim"
+)
+
+// InfoMetadata enables optional source metadata in info.json.
+type InfoMetadata struct {
+	PhysicalDimensions     bool
+	RightsFromWebStatement bool
+}
+
+// PhysicalDimensionsService is the Annex service object. The generated
+// Service type cannot carry its extra properties.
+type PhysicalDimensionsService struct {
+	Context       string  `json:"@context"`
+	ID            string  `json:"id"`
+	Type          string  `json:"type"`
+	Profile       string  `json:"profile"`
+	PhysicalScale float64 `json:"physicalScale"`
+	PhysicalUnits string  `json:"physicalUnits"`
+}
+
+// InfoDocument is Info with the physical dimensions service attached.
+type InfoDocument struct {
+	Info
+	Service []PhysicalDimensionsService `json:"service,omitempty"`
+}
+
+// WithPhysicalDimensions links the service. Image API 3.0 requires id and type
+// on services, so id is the info.json URL (it embeds the data) and type is "Service".
+func (i InfoDocument) WithPhysicalDimensions(mmPerPixel float64) InfoDocument {
+	i.Service = append(i.Service, PhysicalDimensionsService{
+		Context:       PhysDimContext,
+		ID:            i.Id + "/info.json",
+		Type:          "Service",
+		Profile:       PhysDimProfile,
+		PhysicalScale: mmPerPixel,
+		PhysicalUnits: "mm",
+	})
+	return i
+}
+
 // Limits declares server-advertised transform caps for info.json.
 type Limits struct {
 	MaxArea   int64

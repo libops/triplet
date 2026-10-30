@@ -52,16 +52,24 @@ type Handler struct {
 	infoCacheMu       sync.RWMutex
 	infoCache         map[string]cachedDimensions
 	infoLimits        types.Limits
+	infoMetadata      types.InfoMetadata
 	maxSourcePixels   int64
 	maxSourceBytes    int64
 	vipsLimiter       *tvips.Limiter
 	logger            *slog.Logger
 }
 
-type cachedDimensions struct {
+// sourceInfo is what info.json needs from the source image.
+type sourceInfo struct {
 	width, height int
-	size          int64
-	modTime       time.Time
+	mmPerPixel    float64 // 0 when the source declares no resolution
+	rights        string
+}
+
+type cachedDimensions struct {
+	sourceInfo
+	size    int64
+	modTime time.Time
 }
 
 const (
@@ -73,7 +81,7 @@ const (
 // New constructs an Image API handler.
 //
 // derivCache may be nil to disable derivative caching.
-func New(prefix, publicBaseURL string, src storage.Opener, pipe *pipeline.Pipeline, derivCache cache.Store, allowedOrigins []string, invalidationToken string, invalidationCIDRs, trustedProxies []*net.IPNet, infoLimits types.Limits, infoCacheEnabled bool, maxSourcePixels, maxSourceBytes int64, maxConcurrentTransforms int, logger *slog.Logger) *Handler {
+func New(prefix, publicBaseURL string, src storage.Opener, pipe *pipeline.Pipeline, derivCache cache.Store, allowedOrigins []string, invalidationToken string, invalidationCIDRs, trustedProxies []*net.IPNet, infoLimits types.Limits, infoMetadata types.InfoMetadata, infoCacheEnabled bool, maxSourcePixels, maxSourceBytes int64, maxConcurrentTransforms int, logger *slog.Logger) *Handler {
 	if derivCache == nil {
 		derivCache = cache.Noop{}
 	}
@@ -94,6 +102,7 @@ func New(prefix, publicBaseURL string, src storage.Opener, pipe *pipeline.Pipeli
 		infoCacheEnabled:  infoCacheEnabled,
 		infoCache:         map[string]cachedDimensions{},
 		infoLimits:        infoLimits,
+		infoMetadata:      infoMetadata,
 		maxSourcePixels:   maxSourcePixels,
 		maxSourceBytes:    maxSourceBytes,
 		vipsLimiter:       vipsLimiter,
@@ -139,7 +148,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) serveInfo(w http.ResponseWriter, r *http.Request, identifier string) {
-	width, height, err := h.imageDimensions(r.Context(), identifier)
+	src, err := h.readSourceInfo(r.Context(), identifier)
 	if err != nil {
 		if errors.Is(err, pipeline.ErrBusy) {
 			writeError(w, http.StatusServiceUnavailable, "server busy")
@@ -168,9 +177,16 @@ func (h *Handler) serveInfo(w http.ResponseWriter, r *http.Request, identifier s
 
 	info := types.BuildLevel2Info(
 		h.publicBaseURL+h.prefix+"/"+escapeIdentifierPathSegment(identifier),
-		width, height,
+		src.width, src.height,
 		h.infoLimits,
 	)
+	doc := types.InfoDocument{Info: info}
+	if src.rights != "" {
+		doc.Rights = &src.rights
+	}
+	if src.mmPerPixel > 0 {
+		doc = doc.WithPhysicalDimensions(src.mmPerPixel)
+	}
 
 	w.Header().Set("Content-Type", `application/ld+json;profile="`+types.Context+`"`)
 	w.Header().Add("Link", profileLinkHeader)
@@ -178,7 +194,7 @@ func (h *Handler) serveInfo(w http.ResponseWriter, r *http.Request, identifier s
 		w.WriteHeader(http.StatusOK)
 		return
 	}
-	if err := json.NewEncoder(w).Encode(info); err != nil {
+	if err := json.NewEncoder(w).Encode(doc); err != nil {
 		h.logger.Warn("write info.json", "identifier", redact.Identifier(identifier), "identifier_hash", redact.Hash(identifier), "err", err)
 	}
 }
@@ -312,14 +328,14 @@ func (h *Handler) serveImage(w http.ResponseWriter, r *http.Request, req parse.R
 	}
 }
 
-func (h *Handler) imageDimensions(ctx context.Context, identifier string) (int, int, error) {
+func (h *Handler) readSourceInfo(ctx context.Context, identifier string) (sourceInfo, error) {
 	rc, meta, err := h.src.Open(ctx, identifier)
 	if err != nil {
-		return 0, 0, err
+		return sourceInfo{}, err
 	}
 	defer rc.Close()
 	if h.maxSourceBytes > 0 && meta.Size > h.maxSourceBytes {
-		return 0, 0, fmt.Errorf("source exceeds max_source_bytes %d", h.maxSourceBytes)
+		return sourceInfo{}, fmt.Errorf("source exceeds max_source_bytes %d", h.maxSourceBytes)
 	}
 	cacheableMeta := meta.Size > 0 || !meta.ModTime.IsZero()
 	if h.infoCacheEnabled && cacheableMeta {
@@ -327,7 +343,7 @@ func (h *Handler) imageDimensions(ctx context.Context, identifier string) (int, 
 		entry, ok := h.infoCache[identifier]
 		h.infoCacheMu.RUnlock()
 		if ok && entry.size == meta.Size && entry.modTime.Equal(meta.ModTime) {
-			return entry.width, entry.height, nil
+			return entry.sourceInfo, nil
 		}
 	}
 	path := ""
@@ -337,7 +353,7 @@ func (h *Handler) imageDimensions(ctx context.Context, identifier string) (int, 
 	if path == "" {
 		tmp, err := os.CreateTemp("", "triplet-info-source-*")
 		if err != nil {
-			return 0, 0, fmt.Errorf("source temp file: %w", err)
+			return sourceInfo{}, fmt.Errorf("source temp file: %w", err)
 		}
 		path = tmp.Name()
 		defer os.Remove(path)
@@ -348,19 +364,19 @@ func (h *Handler) imageDimensions(ctx context.Context, identifier string) (int, 
 		n, err := io.Copy(tmp, reader)
 		if err != nil {
 			_ = tmp.Close()
-			return 0, 0, fmt.Errorf("spool image: %w", err)
+			return sourceInfo{}, fmt.Errorf("spool image: %w", err)
 		}
 		if h.maxSourceBytes > 0 && n > h.maxSourceBytes {
 			_ = tmp.Close()
-			return 0, 0, fmt.Errorf("source exceeds max_source_bytes %d", h.maxSourceBytes)
+			return sourceInfo{}, fmt.Errorf("source exceeds max_source_bytes %d", h.maxSourceBytes)
 		}
 		if err := tmp.Close(); err != nil {
-			return 0, 0, fmt.Errorf("close source temp file: %w", err)
+			return sourceInfo{}, fmt.Errorf("close source temp file: %w", err)
 		}
 	}
 	release, err := h.vipsLimiter.Acquire(ctx)
 	if err != nil {
-		return 0, 0, fmt.Errorf("%w: acquire vips worker: %w", pipeline.ErrBusy, err)
+		return sourceInfo{}, fmt.Errorf("%w: acquire vips worker: %w", pipeline.ErrBusy, err)
 	}
 	defer release()
 
@@ -369,12 +385,18 @@ func (h *Handler) imageDimensions(ctx context.Context, identifier string) (int, 
 	img, err := gv.LoadImageFromFileDirect(path, params)
 	if err != nil {
 		err = pipeline.WrapSourceLoadError("load", err)
-		return 0, 0, fmt.Errorf("vips load %q size=%d content_type=%q mod_time=%s: %w", path, meta.Size, meta.ContentType, meta.ModTime.Format(time.RFC3339Nano), err)
+		return sourceInfo{}, fmt.Errorf("vips load %q size=%d content_type=%q mod_time=%s: %w", path, meta.Size, meta.ContentType, meta.ModTime.Format(time.RFC3339Nano), err)
 	}
 	defer img.Close()
-	width, height := img.Width(), img.Height()
-	if err := pipeline.CheckSourcePixels(width, height, h.maxSourcePixels); err != nil {
-		return 0, 0, err
+	info := sourceInfo{width: img.Width(), height: img.Height()}
+	if err := pipeline.CheckSourcePixels(info.width, info.height, h.maxSourcePixels); err != nil {
+		return sourceInfo{}, err
+	}
+	if h.infoMetadata.PhysicalDimensions {
+		info.mmPerPixel = mmPerPixel(img, path)
+	}
+	if h.infoMetadata.RightsFromWebStatement {
+		info.rights = webStatementRights(img.GetBlob("xmp-data"))
 	}
 	if h.infoCacheEnabled && cacheableMeta {
 		h.infoCacheMu.Lock()
@@ -385,14 +407,13 @@ func (h *Handler) imageDimensions(ctx context.Context, identifier string) (int, 
 			}
 		}
 		h.infoCache[identifier] = cachedDimensions{
-			width:   width,
-			height:  height,
-			size:    meta.Size,
-			modTime: meta.ModTime,
+			sourceInfo: info,
+			size:       meta.Size,
+			modTime:    meta.ModTime,
 		}
 		h.infoCacheMu.Unlock()
 	}
-	return width, height, nil
+	return info, nil
 }
 
 func (h *Handler) sourceMeta(ctx context.Context, identifier string) (storage.Meta, error) {

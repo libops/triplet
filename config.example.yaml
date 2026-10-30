@@ -108,6 +108,11 @@ iiif:
     # background_color: white
     # Cache info.json dimensions by identifier plus source mtime/size.
     info_dimension_cache: true
+    # Publish source metadata in info.json (both default to false): the file's
+    # resolution as a Physical Dimensions service, and an xmpRights:WebStatement
+    # that is a Creative Commons or RightsStatements.org URI as `rights`.
+    # info_physical_dimensions: true
+    # info_rights_from_web_statement: true
     # Optional protected route for invalidating all derivative variants for one
     # identifier: POST {prefix}/{identifier}/cache/invalidate with
     # Authorization: Bearer ${TRIPLET_IMAGE_CACHE_INVALIDATION_TOKEN}.
