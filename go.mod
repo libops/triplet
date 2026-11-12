@@ -7,7 +7,7 @@ require (
 	github.com/go-sql-driver/mysql v1.10.1
 	github.com/libops/iiif-spec v0.3.0
 	github.com/prometheus/client_golang v1.25.0
-	golang.org/x/image v0.47.0
+	golang.org/x/image v0.48.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -22,8 +22,8 @@ require (
 	github.com/prometheus/procfs v0.22.0 // indirect
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2 // indirect
 	golang.org/x/net v0.60.0 // indirect
-	golang.org/x/sys v0.49.0 // indirect
-	golang.org/x/text v0.43.0 // indirect
+	golang.org/x/sys v0.50.0 // indirect
+	golang.org/x/text v0.44.0 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
 )
 
