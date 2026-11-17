@@ -1,6 +1,6 @@
-# syntax=docker/dockerfile:1.28@sha256:bb22d9815c728170f72750f4e5b0d672e06176142e1d602c7e66c050100b7e5b
+# syntax=docker/dockerfile:1.29@sha256:572cebbc2b15e6f84c077742952674889cb63cd5e9b80abdffcbe587b6f19183
 
-FROM debian:13@sha256:4c25275446ca371766b8b093c696782eabce06263fccacb8d5d813b3dc44b308 AS vips-build
+FROM debian:13@sha256:9c6e381421d0f48d1b8133e573f33c185ee16cbf505eda9c4a8a4791b25ea8a6 AS vips-build
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
@@ -120,7 +120,7 @@ RUN curl -fsSL -o vips.tar.xz "https://github.com/libvips/libvips/releases/downl
   && rm -rf /tmp/vips*
 
 FROM vips-build AS base
-COPY --from=golang:1.27-bookworm@sha256:972b4110ba0f47539a975c31e52c64765e1ff19f2d74469ae4a595c6676e80a5 /usr/local/go /usr/local/go
+COPY --from=golang:1.27-bookworm@sha256:4fa7c968ba93f1635670522dbb01a2c78150443e1385746924566079f36570ea /usr/local/go /usr/local/go
 
 WORKDIR /src
 ENV PATH=/usr/local/go/bin:$PATH
@@ -147,7 +147,7 @@ FROM base AS test-runner
 WORKDIR /app
 ENTRYPOINT ["/bin/bash"]
 
-FROM debian:13@sha256:4c25275446ca371766b8b093c696782eabce06263fccacb8d5d813b3dc44b308 AS runtime
+FROM debian:13@sha256:9c6e381421d0f48d1b8133e573f33c185ee16cbf505eda9c4a8a4791b25ea8a6 AS runtime
 
 ENV LD_LIBRARY_PATH=/usr/local/lib/x86_64-linux-gnu:/usr/local/lib
 ENV TRIPLET_PUBLIC_BASE_URL=http://localhost:8080
